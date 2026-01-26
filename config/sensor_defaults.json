@@ -1,0 +1,106 @@
+{
+    "temperature": {
+        "label": "Temperatura",
+        "unit": "°C",
+        "min": 0,
+        "max": 40,
+        "optimal_min": 26,
+        "optimal_max": 30
+    },
+    "ph": {
+        "label": "pH",
+        "unit": "pH",
+        "min": 0,
+        "max": 14,
+        "optimal_min": 6.8,
+        "optimal_max": 8.2
+    },
+    "do": {
+        "label": "Oxígeno Disuelto (OD)",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 20,
+        "optimal_min": 4.0,
+        "optimal_max": 8.0
+    },
+    "oxygen": {
+        "label": "Oxígeno Disuelto",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 20,
+        "optimal_min": 4.0,
+        "optimal_max": 8.0
+    },
+    "saturation": {
+        "label": "Saturación O2",
+        "unit": "%",
+        "min": 0,
+        "max": 150,
+        "optimal_min": 80,
+        "optimal_max": 110
+    },
+    "ammonia": {
+        "label": "Amonio (NH4)",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 10,
+        "optimal_min": 0,
+        "optimal_max": 1.0
+    },
+    "nitrite": {
+        "label": "Nitrito (NO2)",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 5,
+        "optimal_min": 0,
+        "optimal_max": 0.5
+    },
+    "nitrate": {
+        "label": "Nitrato (NO3)",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 200,
+        "optimal_min": 0,
+        "optimal_max": 50
+    },
+    "alkalinity": {
+        "label": "Alcalinidad",
+        "unit": "mg/L CaCO3",
+        "min": 0,
+        "max": 300,
+        "optimal_min": 100,
+        "optimal_max": 200
+    },
+    "phosphate": {
+        "label": "Fosfato",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 5,
+        "optimal_min": 0,
+        "optimal_max": 1.0
+    },
+    "hardness": {
+        "label": "Dureza",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 500,
+        "optimal_min": 100,
+        "optimal_max": 300
+    },
+    "tss": {
+        "label": "Sólidos Susp. (SST)",
+        "unit": "mg/L",
+        "min": 0,
+        "max": 1000,
+        "optimal_min": 200,
+        "optimal_max": 500
+    },
+    "biofloc_index": {
+        "label": "Índice Biofloc",
+        "unit": "mL/L",
+        "min": 0,
+        "max": 50,
+        "optimal_min": 10,
+        "optimal_max": 20
+    }
+}
