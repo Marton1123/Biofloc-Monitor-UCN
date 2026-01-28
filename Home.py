@@ -1,6 +1,18 @@
+import os 
 import streamlit as st
 from modules.styles import apply_custom_styles, render_header
 from views import dashboard, graphs, history, settings
+
+# --- LOAD SECRETS TO ENV (Compatibilidad Streamlit Cloud) ---
+def load_secrets_to_env():
+    """Carga st.secrets en os.environ para compatibilidad con código que usa os.getenv"""
+    if hasattr(st, "secrets"):
+        for key, value in st.secrets.items():
+            # Solo cargar si no existe ya (prioridad env vars reales o .env)
+            if key not in os.environ and isinstance(value, str):
+                os.environ[key] = value
+
+load_secrets_to_env()
 
 
 def initialize_session_state():
