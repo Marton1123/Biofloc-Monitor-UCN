@@ -126,12 +126,18 @@ class DeviceManager:
             
         new_health = HealthStatus.OK
         
-        # Obtener Thresholds Específicos de este dispositivo
-        dev_thresholds = self.device_specific_thresholds.get(device_id, {})
+        # Obtener Thresholds Específicos de este dispositivo (normalizar keys a lowercase)
+        raw_dev_thresholds = self.device_specific_thresholds.get(device_id, {})
+        dev_thresholds = {k.lower(): v for k, v in raw_dev_thresholds.items()}
+        
+        # Normalizar global thresholds también
+        global_lower = {k.lower(): v for k, v in self.global_thresholds.items()}
         
         for sensor, value in sensors.items():
-            # Buscar config: Específica > Global
-            config = dev_thresholds.get(sensor, self.global_thresholds.get(sensor))
+            sensor_key = sensor.lower() # Normalizar nombre del sensor a lowercase
+            
+            # Buscar config: Específica > Global (ambas normalizadas)
+            config = dev_thresholds.get(sensor_key, global_lower.get(sensor_key))
             
             if not config: continue
             
