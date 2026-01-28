@@ -20,11 +20,9 @@ def get_mongo_client(uri: str) -> Optional[MongoClient]:
     try:
         client = MongoClient(
             uri,
-            tlsCAFile=certifi.where(),
-            connectTimeoutMS=30000, # Aumentar timeout para handshake lento
-            socketTimeoutMS=None,   # Dejar que el driver maneje el socket
+            connectTimeoutMS=30000,
             retryWrites=True,
-            tls=True,               # Forzar TLS explícito
+            tls=True,
             tlsCAFile=certifi.where(),
             tz_aware=True
         )
