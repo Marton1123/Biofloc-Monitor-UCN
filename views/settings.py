@@ -107,7 +107,7 @@ def show_view():
                         n_alias = st.text_input("Alias Visible", value=curr_meta.get("alias", selected_id))
                         n_loc = st.text_input("Ubicación Física", value=curr_meta.get("location", ""))
                         
-                        if st.form_submit_button("Guardar Identidad", type="primary", use_container_width=True):
+                        if st.form_submit_button("Guardar Identidad", type="primary", width="stretch"):
                             if config_manager.update_device_metadata(selected_id, n_alias, n_loc):
                                 st.success("Guardado correctamente.")
                                 st.rerun()
@@ -184,7 +184,7 @@ def show_view():
                         if err:
                             st.error(f"Error Lógico: {err}")
 
-                        submitted = st.form_submit_button("Guardar Umbrales", type="primary", use_container_width=True)
+                        submitted = st.form_submit_button("Guardar Umbrales", type="primary", width="stretch")
                         
                         if submitted:
                             if err:

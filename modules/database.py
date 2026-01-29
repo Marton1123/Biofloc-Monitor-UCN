@@ -123,12 +123,42 @@ class DatabaseConnection:
         
         # Normalizar ID de config/mongo para evitar conflictos si se usa como key
         oid = str(doc.get("_id", ""))
+        
+        # 4. Normalizar nombres de sensores y extraer valores
+        # Soporta dos formatos:
+        # - Plano: {"temperature": 19.85}
+        # - Anidado: {"temperature": {"value": 19.85, "unit": "C", "valid": true}}
+        normalized_sensors = {}
+        for key, value in sensors.items():
+            norm_key = key.lower().strip()
+            
+            # Manejar aliases comunes
+            if norm_key in ["temp", "temperatura"]:
+                norm_key = "temperature"
+            elif norm_key in ["oxigeno", "od", "do"]:
+                norm_key = "oxygen"
+            
+            # Extraer el valor numérico
+            final_value = None
+            if isinstance(value, dict):
+                # Formato anidado: {"value": 19.85, "unit": "C", ...}
+                final_value = value.get("value")
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                # Formato plano: 19.85
+                final_value = value
+            
+            # Solo agregar si es un valor numérico válido
+            if final_value is not None and norm_key not in normalized_sensors:
+                try:
+                    normalized_sensors[norm_key] = float(final_value)
+                except (ValueError, TypeError):
+                    pass  # Ignorar valores no convertibles
             
         return {
             "device_id": dev_id,
             "timestamp": final_ts,
             "location": doc.get("location", "Sin Asignar"),
-            "sensors": sensors,
+            "sensors": normalized_sensors,
             "alerts": doc.get("alerts", []),
             "_source_id": oid 
         }
@@ -192,41 +222,49 @@ class DatabaseConnection:
                 
         return pd.DataFrame()
 
-    # --- MÉTODOS PARA HISTORIAL Y GRÁFICOS (Multi-DB Aggregation) ---
+    # --- METODOS PARA HISTORIAL Y GRAFICOS (Multi-DB Aggregation) ---
     def fetch_data(self, start_date=None, end_date=None, device_ids=None, limit=5000) -> pd.DataFrame:
         if not self.sources: return pd.DataFrame()
         
         all_norm_docs = []
         
-        # Distribuir limite entre fuentes para no sobrecargar
+        # Distribuir limite entre fuentes
         limit_per_source = limit // len(self.sources) + 100
         
-        for source in self.sources:
+        for idx, source in enumerate(self.sources):
             try:
                 db = source["client"][source["db"]]
                 collection = db[source["coll"]]
                 
                 mongo_query = {}
+                
                 if device_ids:
                     mongo_query["$or"] = [
                         {"device_id": {"$in": device_ids}},
                         {"dispositivo_id": {"$in": device_ids}}
                     ]
                 
-                pipeline = [
-                    {"$match": mongo_query},
-                    {"$sort": {"_id": -1}},
-                    {"$limit": limit_per_source}
-                ]
+                raw_documents = []
                 
-                cursor = collection.aggregate(pipeline, allowDiskUse=True)
-                raw_documents = list(cursor)
+                # Intentar con sort primero (obtiene datos recientes)
+                try:
+                    # Usar mismo limite para todas las fuentes
+                    cursor = collection.find(mongo_query).sort("_id", -1).limit(limit_per_source)
+                    raw_documents = list(cursor)
+                except Exception as sort_error:
+                    # Si falla el sort (memory limit), intentar sin sort
+                    if "memory" in str(sort_error).lower() or "Sort" in str(sort_error):
+                        # Cargar sin ordenar - se ordenara en Python despues
+                        cursor = collection.find(mongo_query).limit(limit_per_source)
+                        raw_documents = list(cursor)
+                    else:
+                        raise sort_error
                 
                 for d in raw_documents:
                     all_norm_docs.append(self._normalize_document(d))
                     
             except Exception as e:
-                st.warning(f"Error parcial obteniendo datos de {source['name']}: {str(e)}")
+                st.warning(f"Error parcial en {source['name']}: {str(e)[:100]}")
                 continue
         
         if not all_norm_docs:

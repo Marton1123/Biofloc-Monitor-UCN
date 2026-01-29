@@ -249,23 +249,23 @@ def render_live_device_card(device_obj: DeviceInfo, thresholds: Dict, config_man
         # Boton Anterior
         with c1:
             disable_prev = current_page <= 0
-            if st.button("◀", key=f"prev_{dev_id}", disabled=disable_prev, use_container_width=True):
+            if st.button("◀", key=f"prev_{dev_id}", disabled=disable_prev, width="stretch"):
                 new_page = max(0, current_page - 1)
                 st.session_state[page_key] = new_page
                 
         # Boton Actualizar (Centro)
         with c2:
-            refresh = st.button("Actualizar", key=f"refresh_{dev_id}", use_container_width=True)
+            refresh = st.button("Actualizar", key=f"refresh_{dev_id}", width="stretch")
             
         # Boton Siguiente
         with c3:
             disable_next = current_page >= total_pages - 1
-            if st.button("▶", key=f"next_{dev_id}", disabled=disable_next, use_container_width=True):
+            if st.button("▶", key=f"next_{dev_id}", disabled=disable_next, width="stretch"):
                 new_page = min(total_pages - 1, current_page + 1)
                 st.session_state[page_key] = new_page
     else:
         # Sin paginacion: solo actualizar
-        refresh = st.button("Actualizar", key=f"refresh_{dev_id}", use_container_width=True)
+        refresh = st.button("Actualizar", key=f"refresh_{dev_id}", width="stretch")
     
     # --- LOGICA DE REFRESH ---
     if refresh:
@@ -307,14 +307,14 @@ def render_device_grid(devices, thresholds, config_manager=None):
             c1, c2, c3 = st.columns([1, 10, 1])
             with c1:
                 # Boton izquierdo
-                if st.button("←", disabled=current_page==0, key="prev", use_container_width=True): 
+                if st.button("←", disabled=current_page==0, key="prev", width="stretch"): 
                     st.session_state.dashboard_page -= 1
                     st.rerun()
             with c2: 
                 st.markdown(f"<div style='text-align:center; color:#94a3b8; font-size:0.8rem; margin-top:8px; font-weight:600;'>Página {current_page+1} de {total_pages}</div>", unsafe_allow_html=True)
             with c3:
-                # Boton derecho - use_container_width ayuda a llenar la columna
-                if st.button("→", disabled=current_page >= total_pages-1, key="next", use_container_width=True): 
+                # Boton derecho - width='stretch' ayuda a llenar la columna
+                if st.button("→", disabled=current_page >= total_pages-1, key="next", width="stretch"): 
                     st.session_state.dashboard_page += 1
                     st.rerun()
 

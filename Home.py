@@ -5,12 +5,18 @@ from views import dashboard, graphs, history, settings
 
 # --- LOAD SECRETS TO ENV (Compatibilidad Streamlit Cloud) ---
 def load_secrets_to_env():
-    """Carga st.secrets en os.environ para compatibilidad con código que usa os.getenv"""
-    if hasattr(st, "secrets"):
-        for key, value in st.secrets.items():
-            # Solo cargar si no existe ya (prioridad env vars reales o .env)
-            if key not in os.environ and isinstance(value, str):
-                os.environ[key] = value
+    """Carga st.secrets en os.environ para compatibilidad con codigo que usa os.getenv.
+    En desarrollo local (sin secrets.toml), simplemente no hace nada y deja que .env funcione.
+    """
+    try:
+        if hasattr(st, "secrets") and len(st.secrets) > 0:
+            for key, value in st.secrets.items():
+                # Solo cargar si no existe ya (prioridad env vars reales o .env)
+                if key not in os.environ and isinstance(value, str):
+                    os.environ[key] = value
+    except Exception:
+        # No hay secrets.toml - desarrollo local usa .env via python-dotenv
+        pass
 
 load_secrets_to_env()
 
