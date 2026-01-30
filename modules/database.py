@@ -35,44 +35,48 @@ def get_mongo_client(uri: str) -> Optional[MongoClient]:
 
 class DatabaseConnection:
     CONFIG_COLLECTION = "system_config"
-    DEVICES_COLLECTION = "devices"
 
     def __init__(self):
         self.sources = []
         
-        # 1. Fuente Principal
-        uri1 = os.getenv("MONGO_URI")
-        db1 = os.getenv("MONGO_DB")
-        coll1 = os.getenv("MONGO_COLLECTION")
+        # Cargar fuentes dinámicamente (1 y 2, y escalable a N si se quisiera)
+        # Fuente 1
+        self._add_source(
+            uri=os.getenv("MONGO_URI"),
+            db_name=os.getenv("MONGO_DB"),
+            telem_coll=os.getenv("MONGO_COLLECTION"),
+            dev_coll=os.getenv("MONGO_DEVICES_COLLECTION"),
+            name="Primary",
+            is_writable=True # Solo la principal es editable por defecto para seguridad
+        )
         
-        if uri1 and db1 and coll1:
-            client1 = get_mongo_client(uri1)
-            if client1:
+        # Fuente 2
+        self._add_source(
+            uri=os.getenv("MONGO_URI_2"),
+            db_name=os.getenv("MONGO_DB_2"),
+            telem_coll=os.getenv("MONGO_COLLECTION_2"),
+            dev_coll=os.getenv("MONGO_DEVICES_COLLECTION_2"),
+            name="Secondary",
+            is_writable=False 
+        )
+
+    def _add_source(self, uri, db_name, telem_coll, dev_coll, name, is_writable=False):
+        """Helper para registrar fuentes de datos de forma modular."""
+        if uri and db_name:
+            client = get_mongo_client(uri)
+            if client:
                 self.sources.append({
-                    "name": "Primary",
-                    "client": client1,
-                    "db": db1,
-                    "coll": coll1
-                })
-        
-        # 2. Fuente Secundaria (Partner)
-        uri2 = os.getenv("MONGO_URI_2")
-        db2 = os.getenv("MONGO_DB_2")
-        coll2 = os.getenv("MONGO_COLLECTION_2")
-        
-        if uri2 and db2 and coll2:
-            client2 = get_mongo_client(uri2)
-            if client2:
-                self.sources.append({
-                    "name": "Secondary",
-                    "client": client2,
-                    "db": db2,
-                    "coll": coll2
+                    "name": name,
+                    "client": client,
+                    "db": db_name,
+                    "coll_telemetry": telem_coll,
+                    "coll_devices": dev_coll,
+                    "writable": is_writable
                 })
 
     # --- MÉTODOS ADAPTER (Normalización) ---
     def _normalize_document(self, doc: Dict[str, Any]) -> Dict[str, Any]:
-        """ADAPTER: Normaliza documentos de diferentes esquemas a un formato unificado."""
+        """ADAPTER: Normaliza documentos de TELEMETRÍA de diferentes esquemas."""
         if not doc: return {}
         
         # 1. Normalizar ID de Dispositivo
@@ -96,24 +100,19 @@ class DatabaseConnection:
                 raw_ts = raw_ts["$date"]
                 
             if isinstance(raw_ts, (int, float)):
-                # Forzar interpretation como UTC
                 if raw_ts > 1e11: 
                     final_ts = pd.to_datetime(raw_ts, unit='ms', utc=True).to_pydatetime()
                 else:
                     final_ts = pd.to_datetime(raw_ts, unit='s', utc=True).to_pydatetime()
             elif isinstance(raw_ts, str):
-                # Soporte para ISO8601 con offset (e.g., 2026-01-30T11:01:56-0300)
                 try:
-                    # Intento directo first (es mas rapido)
                     final_ts = datetime.fromisoformat(raw_ts)
                 except ValueError:
                     final_ts = pd.to_datetime(raw_ts, errors='coerce', utc=True)
                     if pd.isna(final_ts): final_ts = None
                     else: final_ts = final_ts.to_pydatetime()
-
             elif isinstance(raw_ts, datetime):
                 final_ts = raw_ts
-                # Si pymongo nos da naive, asumimos UTC manualmente (caso raro con tz_aware=True)
                 if final_ts.tzinfo is None:
                     final_ts = final_ts.replace(tzinfo=timezone.utc)
         except Exception:
@@ -121,43 +120,31 @@ class DatabaseConnection:
         
         if final_ts is not None:
              if final_ts.tzinfo is not None:
-                 # Si viene con zona horaria (UTC de Mongo o Offset), convertir a Chile (UTC-3)
                  chile_tz = timezone(timedelta(hours=-3))
                  final_ts = final_ts.astimezone(chile_tz)
-                 final_ts = final_ts.replace(tzinfo=None) # Hacer naive para compatibilidad interna
+                 final_ts = final_ts.replace(tzinfo=None)
         
-        # Normalizar ID de config/mongo para evitar conflictos si se usa como key
         oid = str(doc.get("_id", ""))
         
-        # 4. Normalizar nombres de sensores y extraer valores
-        # Soporta dos formatos:
-        # - Plano: {"temperature": 19.85}
-        # - Anidado: {"temperature": {"value": 19.85, "unit": "C", "valid": true}}
+        # 4. Normalizar Sensores (Flattening)
         normalized_sensors = {}
         for key, value in sensors.items():
             norm_key = key.lower().strip()
             
-            # Manejar aliases comunes
-            if norm_key in ["temp", "temperatura"]:
-                norm_key = "temperature"
-            elif norm_key in ["oxigeno", "od", "do"]:
-                norm_key = "oxygen"
+            if norm_key in ["temp", "temperatura"]: norm_key = "temperature"
+            elif norm_key in ["oxigeno", "od", "do"]: norm_key = "oxygen"
             
-            # Extraer el valor numérico
             final_value = None
             if isinstance(value, dict):
-                # Formato anidado: {"value": 19.85, "unit": "C", ...}
                 final_value = value.get("value")
             elif isinstance(value, (int, float)) and not isinstance(value, bool):
-                # Formato plano: 19.85
                 final_value = value
             
-            # Solo agregar si es un valor numérico válido
             if final_value is not None: 
                 try:
                     normalized_sensors[norm_key] = float(final_value)
                 except (ValueError, TypeError):
-                    pass  # Ignorar valores no convertibles
+                    pass
             
         return {
             "device_id": dev_id,
@@ -168,20 +155,55 @@ class DatabaseConnection:
             "_source_id": oid 
         }
 
-    # --- MÉTODO PARA DASHBOARD (Multi-DB) ---
+    def _normalize_device_doc(self, raw_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """ADAPTER: Normaliza metadatos de DISPOSITIVOS de diferentes esquemas (Propio vs Partner)."""
+        if not raw_doc: return {}
+        
+        # ID es clave siempre
+        d_id = raw_doc.get("_id")
+        
+        # 1. Alias / Nombre
+        # Schema Propio: 'alias'
+        # Schema Partner: 'nombre'
+        alias = raw_doc.get("alias")
+        if not alias:
+            alias = raw_doc.get("nombre", d_id) # Fallback al ID si no hay nombre
+            
+        # 2. Location / Ubicación
+        # Schema Propio: 'location'
+        # Schema Partner: 'ubicacion'
+        loc = raw_doc.get("location")
+        if not loc:
+            loc = raw_doc.get("ubicacion", "Desconocido")
+            
+        # 3. Umbrales
+        # Ambos parecen usar 'umbrales' o 'config' -> mapping directo
+        # Si Partner usa estructura plana en 'umbrales', ConfigManager ya lo maneja (normalize_thresholds)
+        umbrales = raw_doc.get("umbrales", {})
+        
+        # Construir doc unificado
+        return {
+            "_id": d_id,
+            "alias": alias,
+            "location": loc,
+            "umbrales": umbrales,
+            "original_source": raw_doc # Guardar original por si acaso
+        }
+
+    # --- MÉTODO PARA DASHBOARD (Multi-DB Telemetría) ---
     def get_latest_by_device(self, retries: int = 2) -> pd.DataFrame:
         if not self.sources: return pd.DataFrame()
         
         all_docs = []
         seen_devices = set()
         
-        # Iterar sobre todas las fuentes configuradas
         for source in self.sources:
+            if not source["coll_telemetry"]: continue
             try:
                 db = source["client"][source["db"]]
-                collection = db[source["coll"]]
+                collection = db[source["coll_telemetry"]]
                 
-                cursor = collection.find({}).sort("timestamp", -1).limit(1000) # Limitamos por fuente
+                cursor = collection.find({}).sort("timestamp", -1).limit(1000)
                 documents = list(cursor)
                 
                 for raw_doc in documents:
@@ -193,70 +215,53 @@ class DatabaseConnection:
                         all_docs.append(norm_doc)
                         
             except Exception as e:
-                print(f"Error fetching from source {source['name']}: {str(e)}")
+                print(f"Error fetching telemetry from {source['name']}: {str(e)}")
                 continue
 
         return self._rows_to_dataframe(all_docs)
 
     def get_latest_for_single_device(self, device_id: str) -> pd.DataFrame:
-        """Busca el dispositivo en todas las fuentes hasta encontrarlo."""
         if not self.sources: return pd.DataFrame()
         
         for source in self.sources:
+            if not source["coll_telemetry"]: continue
             try:
                 db = source["client"][source["db"]]
-                collection = db[source["coll"]]
+                collection = db[source["coll_telemetry"]]
                 
-                query = {
-                    "$or": [
-                        {"device_id": device_id},
-                        {"dispositivo_id": device_id}
-                    ]
-                }
+                query = {"$or": [{"device_id": device_id}, {"dispositivo_id": device_id}]}
                 
                 doc = collection.find_one(query, sort=[("timestamp", -1)])
                 if doc:
                     norm_doc = self._normalize_document(doc)
                     return self._rows_to_dataframe([norm_doc])
-                    
             except Exception:
                 continue
-                
         return pd.DataFrame()
 
-    # --- METODOS PARA HISTORIAL Y GRAFICOS (Multi-DB Aggregation) ---
+    # --- METODOS PARA HISTORIAL (Multi-DB) ---
     def fetch_data(self, start_date=None, end_date=None, device_ids=None, limit=5000) -> pd.DataFrame:
         if not self.sources: return pd.DataFrame()
         
         all_norm_docs = []
-        
-        # Distribuir limite entre fuentes
         limit_per_source = limit // len(self.sources) + 100
         
-        for idx, source in enumerate(self.sources):
+        for source in self.sources:
+            if not source["coll_telemetry"]: continue
             try:
                 db = source["client"][source["db"]]
-                collection = db[source["coll"]]
+                collection = db[source["coll_telemetry"]]
                 
                 mongo_query = {}
-                
                 if device_ids:
-                    mongo_query["$or"] = [
-                        {"device_id": {"$in": device_ids}},
-                        {"dispositivo_id": {"$in": device_ids}}
-                    ]
+                    mongo_query["$or"] = [{"device_id": {"$in": device_ids}}, {"dispositivo_id": {"$in": device_ids}}]
                 
                 raw_documents = []
-                
-                # Intentar con sort primero (obtiene datos recientes)
                 try:
-                    # Usar mismo limite para todas las fuentes
                     cursor = collection.find(mongo_query).sort("timestamp", -1).limit(limit_per_source)
                     raw_documents = list(cursor)
                 except Exception as sort_error:
-                    # Si falla el sort (memory limit), intentar sin sort
                     if "memory" in str(sort_error).lower() or "Sort" in str(sort_error):
-                        # Cargar sin ordenar - se ordenara en Python despues
                         cursor = collection.find(mongo_query).limit(limit_per_source)
                         raw_documents = list(cursor)
                     else:
@@ -264,116 +269,162 @@ class DatabaseConnection:
                 
                 for d in raw_documents:
                     all_norm_docs.append(self._normalize_document(d))
-                    
             except Exception as e:
-                st.warning(f"Error parcial en {source['name']}: {str(e)[:100]}")
+                st.warning(f"Error fetching history from {source['name']}: {str(e)[:100]}")
                 continue
         
-        if not all_norm_docs:
-            return pd.DataFrame()
+        if not all_norm_docs: return pd.DataFrame()
             
-        # Ordenar todo lo combinado por fecha descendente
         all_norm_docs.sort(key=lambda x: x["timestamp"] or datetime.min, reverse=True)
-        
-        # Convertir a DataFrame historial plano
         df = self._parse_historical_flat(all_norm_docs)
         
-        # Filtro de fechas en memoria (Pandas)
         if not df.empty and (start_date or end_date):
             if df['timestamp'].dt.tz is not None:
                     df['timestamp'] = df['timestamp'].dt.tz_localize(None)
-            
             if start_date:
                 if not isinstance(start_date, datetime): start_date = pd.to_datetime(start_date)
                 df = df[df['timestamp'] >= start_date]
-            
             if end_date:
                 if not isinstance(end_date, datetime): end_date = pd.to_datetime(end_date)
                 df = df[df['timestamp'] <= end_date]
         
         return df
 
-    # --- MÉTODOS DE CONFIGURACIÓN & DISPOSITIVOS ---
-    
-    def _get_primary_db(self):
-        if not self.sources: return None
-        return self.sources[0]["client"][self.sources[0]["db"]]
-
-    def _get_collection(self, coll_name):
-        db = self._get_primary_db()
-        if db is not None:
-             return db[coll_name]
-        return None
-
-    def get_config(self, config_id: str) -> Optional[Dict[str, Any]]:
-        coll = self._get_collection(self.CONFIG_COLLECTION)
-        if coll is None: return None
-        try:
-            return coll.find_one({"_id": config_id})
-        except Exception:
-            return None
-
-    def save_config(self, config_id: str, config_data: Dict[str, Any]) -> bool:
-        coll = self._get_collection(self.CONFIG_COLLECTION)
-        if coll is None: return False
-        try:
-            config_data["_id"] = config_id
-            config_data["last_updated"] = datetime.now().isoformat()
-            result = coll.replace_one({"_id": config_id}, config_data, upsert=True)
-            return result.acknowledged
-        except Exception as e:
-            st.error(f"Error al guardar config: {str(e)}")
-            return False
-            
-    # --- MÉTODOS PARA COLECCIÓN DE DISPOSITIVOS (NUEVO ESQUEMA) ---
+    # --- MÉTODOS DE CONFIGURACIÓN & DISPOSITIVOS (Global / Multi-DB) ---
     
     def get_all_registered_devices(self) -> List[Dict[str, Any]]:
-        """Recupera todos los documentos de la colección 'devices'."""
-        coll = self._get_collection(self.DEVICES_COLLECTION)
-        if coll is None: return []
-        try:
-            return list(coll.find({}))
-        except Exception as e:
-            print(f"Error fetching devices metadata: {e}")
-            return []
+        """Recupera dispositivos de TODAS las fuentes configuradas."""
+        all_devices = {} # Dict para de-duplicar por ID
+        
+        for source in self.sources:
+            if not source["coll_devices"]: continue
+            try:
+                db = source["client"][source["db"]]
+                coll = db[source["coll_devices"]]
+                
+                raw_list = list(coll.find({}))
+                for raw in raw_list:
+                    norm = self._normalize_device_doc(raw)
+                    d_id = norm["_id"]
+                    # Si ya existe (ej. estaba en Primary), NO sobrescribir con Secondary
+                    # Asumimos prioridad por orden de sources (Primary primero)
+                    if d_id and d_id not in all_devices:
+                        all_devices[d_id] = norm
+                        
+            except Exception as e:
+                print(f"Error fetching devices from {source['name']}: {e}")
+                
+        return list(all_devices.values())
 
     def get_device_doc(self, device_id: str) -> Optional[Dict[str, Any]]:
-        coll = self._get_collection(self.DEVICES_COLLECTION)
-        if coll is None: return None
-        try:
-            return coll.find_one({"_id": device_id})
-        except Exception:
-            return None
+        """Busca metadata de un dispositivo específico en todas las fuentes."""
+        for source in self.sources:
+            if not source["coll_devices"]: continue
+            try:
+                db = source["client"][source["db"]]
+                coll = db[source["coll_devices"]]
+                
+                doc = coll.find_one({"_id": device_id})
+                if doc:
+                    return self._normalize_device_doc(doc)
+            except Exception:
+                continue
+        return None
 
     def update_device_doc(self, device_id: str, update_data: Dict[str, Any]) -> bool:
-        """Actualiza campos específicos de un dispositivo (partial update)."""
-        coll = self._get_collection(self.DEVICES_COLLECTION)
-        if coll is None: return False
+        """
+        Intenta actualizar el dispositivo en la fuente donde 'vive'.
+        Si no existe, lo crea en la fuente PRIMARIA (Writeable).
+        """
+        
+        # 1. Buscar dónde existe este ID
+        target_source = None
+        for source in self.sources:
+            if not source["coll_devices"]: continue
+            # Check existencia (sin traer todo el doc para ser eficiente)
+            try:
+                if source["client"][source["db"]][source["coll_devices"]].count_documents({"_id": device_id}, limit=1) > 0:
+                    if source["writable"]:
+                        target_source = source
+                        break
+                    else:
+                        # Existe pero es Read-Only (ej. DB del Partner)
+                        st.warning(f"El dispositivo {device_id} pertenece a una BD externa de solo lectura.")
+                        return False
+            except: continue
+        
+        # 2. Si no existe en ninguna, usar la Principal (si es writable)
+        if not target_source:
+            for source in self.sources:
+                if source["writable"] and source["coll_devices"]:
+                    target_source = source
+                    break
+        
+        if not target_source:
+            st.error("No hay base de datos de escritura configurada.")
+            return False
+            
+        # 3. Ejecutar Update
         try:
-            # Asegurar que se haga un set para no borrar otros campos
+            coll = target_source["client"][target_source["db"]][target_source["coll_devices"]]
+            
+            # Map update keys si es necesario (Adapter Inverso)
+            # Como usamos update $set, solo mapeamos las keys que sabemos que cambian de nombre
+            final_update_data = {}
+            for k, v in update_data.items():
+                if k == "location" and "nombre" in target_source.get("mapping", []): 
+                    # Ejemplo hipotetico, aqui asumimos que 'ubicacion' es el standart de partner
+                    # Pero para simplificar, si es la DB partner y es readonly, nunca llegamos aqui.
+                    pass
+                
+                # Si estamos escribiendo en la nuestra (devices), el esquema es directo.
+                # Si escribieramos en la de partner (devices_data), tendriamos que mapear 'location' -> 'ubicacion'
+                # PERO como definimos la source 2 como ReadOnly (writable=False), no necesitamos mapear escritura compleja por ahora.
+                final_update_data[k] = v
+            
             result = coll.update_one(
                 {"_id": device_id},
-                {"$set": update_data},
+                {"$set": final_update_data},
                 upsert=True
             )
             return result.acknowledged
         except Exception as e:
-            st.error(f"Error actualizando dispositivo {device_id}: {e}")
+            st.error(f"Error updating device {device_id}: {e}")
             return False
 
-    def delete_config(self, config_id: str) -> bool:
-        coll = self._get_collection(self.CONFIG_COLLECTION)
-        if coll is None: return False
+    # --- CONFIG LEGACY / GLOBAL ---
+    def get_config(self, config_id: str) -> Optional[Dict[str, Any]]:
+        # La config global solo vive en la primaria
+        db = self._get_primary_db()
+        if not db: return None
         try:
-            result = coll.delete_one({"_id": config_id})
-            return result.deleted_count > 0
-        except Exception:
-            return False
+            return db[self.CONFIG_COLLECTION].find_one({"_id": config_id})
+        except: return None
 
-    # --- HELPERS DE DATAFRAME ---
-    
+    def save_config(self, config_id: str, config_data: Dict[str, Any]) -> bool:
+        db = self._get_primary_db()
+        if not db: return False
+        try:
+            config_data["_id"] = config_id
+            config_data["last_updated"] = datetime.now().isoformat()
+            return db[self.CONFIG_COLLECTION].replace_one({"_id": config_id}, config_data, upsert=True).acknowledged
+        except Exception: return False
+        
+    def delete_config(self, config_id: str) -> bool:
+        db = self._get_primary_db()
+        if not db: return False
+        try:
+            return db[self.CONFIG_COLLECTION].delete_one({"_id": config_id}).deleted_count > 0
+        except: return False
+
+    # --- HELPERS ---
+    def _get_primary_db(self):
+        for s in self.sources:
+            if s["name"] == "Primary":
+                return s["client"][s["db"]]
+        return None
+
     def _rows_to_dataframe(self, norm_docs: List[Dict[str, Any]]) -> pd.DataFrame:
-        """Convierte docs YA normalizados a DataFrame para Dashboard."""
         processed = []
         for doc in norm_docs:
             processed.append({
@@ -383,40 +434,22 @@ class DatabaseConnection:
                 "sensor_data": doc["sensors"], 
                 "alerts": doc["alerts"]
             })
-            
         df = pd.DataFrame(processed)
         if "timestamp" in df.columns and not df.empty:
              df["timestamp"] = pd.to_datetime(df["timestamp"], errors='coerce')
         return df
 
     def _parse_historical_flat(self, norm_docs: List[Dict[str, Any]]) -> pd.DataFrame:
-        """Convierte docs YA normalizados a estructura plana para Historial/Gráficas."""
         flat_data = []
         for doc in norm_docs:
-            row = {
-                "timestamp": doc["timestamp"],
-                "device_id": doc["device_id"],
-                "location": doc["location"],
-            }
-            # Aplanar sensores
-            sensors = doc["sensors"]
-            for name, val in sensors.items():
-                # Manejar si el sensor es un objeto {value: ...} o valor directo
-                if isinstance(val, dict):
-                    row[name] = val.get("value")
-                elif isinstance(val, (int, float)):
-                    row[name] = val
-                    
+            row = {"timestamp": doc["timestamp"], "device_id": doc["device_id"], "location": doc["location"]}
+            for name, val in doc["sensors"].items():
+                if isinstance(val, dict): row[name] = val.get("value")
+                elif isinstance(val, (int, float)): row[name] = val
             flat_data.append(row)
         
         df = pd.DataFrame(flat_data)
-        
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors='coerce')
-            
-        # Asegurar tipos numéricos para columnas de sensores
+        if "timestamp" in df.columns: df["timestamp"] = pd.to_datetime(df["timestamp"], errors='coerce')
         cols = df.columns.drop(['timestamp', 'device_id', 'location'], errors='ignore')
-        for col in cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            
+        for col in cols: df[col] = pd.to_numeric(df[col], errors='coerce')
         return df

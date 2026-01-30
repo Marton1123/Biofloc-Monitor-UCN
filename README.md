@@ -131,12 +131,21 @@ pip install -r requirements.txt
 
 ### 4. Configurar Variables de Entorno
 
-Crea un archivo `.env` en la raíz del proyecto:
+Crea un archivo `.env` en la raíz del proyecto. El sistema soporta múltiples fuentes de datos de forma modular:
 
 ```ini
+# --- BD PRINCIPAL (Escritura/Lectura) ---
 MONGO_URI=mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/
 MONGO_DB=BioflocDB
-MONGO_COLLECTION=SensorReadings
+MONGO_COLLECTION=telemetria           # Colección de datos de sensores
+MONGO_DEVICES_COLLECTION=devices      # Colección de metadatos de dispositivos
+
+# --- BD SECUNDARIA (Opcional - Solo Lectura) ---
+# Útil para integrar datos de partners o sensores externos
+MONGO_URI_2=...
+MONGO_DB_2=...
+MONGO_COLLECTION_2=...
+MONGO_DEVICES_COLLECTION_2=...
 ```
 
 ### 5. Ejecutar la Aplicación
@@ -175,13 +184,20 @@ Asegúrate de que tu repositorio tenga:
 
 ### 2. Crear Secrets en Streamlit Cloud
 
-En la configuración de tu app en Streamlit Cloud, añade estos secretos:
+En la configuración de tu app en Streamlit Cloud, añade estos secretos (formato TOML):
 
 ```toml
-[mongo]
-uri = "mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/"
-db = "BioflocDB"
-collection = "SensorReadings"
+# BD Principal
+MONGO_URI = "mongodb+srv://..."
+MONGO_DB = "BioflocDB"
+MONGO_COLLECTION = "telemetria"
+MONGO_DEVICES_COLLECTION = "devices"
+
+# BD Secundaria (Opcional)
+MONGO_URI_2 = "mongodb+srv://..."
+MONGO_DB_2 = "ExternalDB"
+MONGO_COLLECTION_2 = "sensor_data"
+MONGO_DEVICES_COLLECTION_2 = "devices_data"
 ```
 
 ### 3. Desplegar
