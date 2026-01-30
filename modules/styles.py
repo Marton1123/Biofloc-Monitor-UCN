@@ -113,8 +113,8 @@ def render_header(connected=True):
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: white;"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5c0-1.1.9-2 2-2"/></svg>
 </div>
 <div>
-<h1 style="margin: 0; font-size: 1.8rem; font-weight: 700; color: white; line-height: 1.1;">Sistema de Monitoreo</h1>
-<p style="margin: 0.25rem 0 0 0; color: rgba(255,255,255,0.85); font-size: 0.95rem;">Biofloc UCN - Control Inteligente</p>
+<h1 style="margin: 0; font-size: 1.8rem; font-weight: 700; color: white; line-height: 1.1;">Core-IoT-Monitor</h1>
+<p style="margin: 0.25rem 0 0 0; color: rgba(255,255,255,0.85); font-size: 0.95rem;">Arquitectura Base - Control Inteligente</p>
 </div>
 </div>
 <div style="background: rgba(255,255,255,0.15); color: white; padding: 0.5rem 1rem; border-radius: 99px; font-size: 0.8rem; font-weight: 600; border: 1px solid rgba(255,255,255,0.25); display: flex; align-items: center; gap: 8px;">

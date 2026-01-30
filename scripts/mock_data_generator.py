@@ -58,7 +58,7 @@ def generate_mock_data():
          "sensors": ["temperature", "ph", "do", "ammonia"]},
         {"id": "Tanque-B1 (Tilapia)", "status": "warning", "loc": "Invernadero 2", 
          "sensors": ["temperature", "ph", "do", "turbidity"]},
-        {"id": "Biofloc-Principal", "status": "ok", "loc": "Zona Tesis", 
+        {"id": "Main-System-Unit", "status": "ok", "loc": "Zona Tesis", 
          "sensors": ["temperature", "ph", "do", "ammonia"]},
         
         # --- DISPOSITIVOS CON MUCHOS SENSORES (5-8) ---

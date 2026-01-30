@@ -1,6 +1,6 @@
-# Manual de Operación - Biofloc Monitor UCN
+# Manual de Operación
 
-Este documento describe el funcionamiento y operación de la plataforma de monitoreo Biofloc.
+Este documento describe el funcionamiento y operación de la plataforma de monitoreo IoT.
 
 ---
 

@@ -1,14 +1,15 @@
-# 🦐 Biofloc Monitor UCN
+# 🌊 Core-IoT-Monitor
 
 <div align="center">
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.36+-red?logo=streamlit&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green?logo=mongodb&logoColor=white)
+![ROS 2](https://img.shields.io/badge/ROS_2-Jazzy-22314E?logo=ros&logoColor=white)
 
-**Sistema de monitoreo y control de calidad de agua para acuicultura Biofloc**
+**Arquitectura base modular y escalable para monitoreo IoT en acuicultura, integrando ROS 2, MongoDB y Dashboards en tiempo real**
 
-[Demo en Vivo](#) · [Documentación](docs/MANUAL_USUARIO.md) · [Reportar Bug](https://github.com/Marton1123/Biofloc-Monitor-UCN/issues)
+[Demo en Vivo](#) · [Documentación](docs/MANUAL_USUARIO.md) · [Reportar Bug](https://github.com/Marton1123/Core-IoT-Monitor/issues)
 
 </div>
 
@@ -16,18 +17,31 @@
 
 ## 📋 Descripción
 
-Plataforma web para la supervisión remota de parámetros fisicoquímicos críticos (pH, oxígeno disuelto, temperatura, entre otros) en sistemas de cultivo Biofloc. El sistema procesa datos de telemetría provenientes de múltiples nodos sensores IoT almacenados en MongoDB Atlas.
+**Core-IoT-Monitor** es una plataforma base de código abierto diseñada para acelerar el desarrollo de soluciones de monitoreo en la industria de la acuicultura. Proporciona una arquitectura robusta y desacoplada para la supervisión remota de parámetros fisicoquímicos críticos (pH, oxígeno disuelto, temperatura, etc.) en diversos entornos de cultivo (Biofloc, RAS, estanques tradicionales).
+
+El sistema actúa como el núcleo de visualización y gestión, procesando datos de telemetría provenientes de nodos IoT (basados en ROS 2 / Micro-ROS) almacenados en MongoDB Atlas.
+
+### 🚀 Uso como Plantilla (Quick Start)
+
+Este repositorio está diseñado para ser **bifurcado (Forked)** y utilizado como punto de partida para tu propio proyecto de monitoreo.
+
+1. **Fork & Rename**: Crea un fork de este repositorio y renómbralo a tu proyecto (ej. `Salmon-Monitor-X`).
+2. **Personaliza**: Edita `modules/styles.py` para adaptar la paleta de colores a tu marca.
+3. **Configura**: Ajusta `config/sensor_defaults.json` con los sensores específicos de tu sistema.
+4. **Despliega**: Conecta tu propia base de datos MongoDB y despliega en Streamlit Cloud o Docker.
+
+---
 
 ### ✨ Funcionalidades Principales
 
 | Función | Descripción |
 |---------|-------------|
-| **📊 Dashboard en Tiempo Real** | Visualización del estado de cada dispositivo con actualizaciones parciales por tarjeta |
-| **🚦 Sistema de Alertas** | Semaforización automática (Normal/Alerta/Crítico) basada en umbrales configurables |
-| **📈 Gráficas Interactivas** | Análisis de tendencias con Plotly, zoom, pan y exportación de imágenes |
-| **📥 Exportación de Datos** | Descarga de históricos en formato Excel (.xlsx) y CSV |
-| **⚙️ Configuración Dinámica** | Ajuste de umbrales y metadatos de dispositivos sin reiniciar el sistema |
-| **🔄 Actualización Parcial** | Botón de refresh por dispositivo que solo recarga esa tarjeta (sin recargar toda la página) |
+| **📊 Dashboard Modular** | Interfaz unificada capaz de renderizar dinámicamente cualquier sensor detectado en la DB |
+| **🚦 Sistema de Alertas** | Semaforización automática (Normal/Alerta/Crítico) y lógica de alertas extensible |
+| **📈 Gráficas Interactivas** | Análisis de tendencias con Plotly, independiente del tipo de sensor monitoreado |
+| **📥 Exportación Universal** | Descarga de históricos en formato Excel (.xlsx) y CSV normalizado |
+| **⚙️ Configuración Dinámica** | Ajuste de umbrales y metadatos de dispositivos en tiempo de ejecución (Hot-Reload) |
+| **Bajo Acoplamiento** | Separación estricta entre Lógica de Datos (Modules) y Presentación (Views) |
 
 ---
 
@@ -35,15 +49,15 @@ Plataforma web para la supervisión remota de parámetros fisicoquímicos críti
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   ESP32 + IoT   │────▶│  MongoDB Atlas   │◀────│  Streamlit App  │
-│   Sensores      │     │  (Base de Datos) │     │  (Esta App)     │
+│  Nodos ROS 2    │────▶│  MongoDB Atlas   │◀────│  Core IoT App   │
+│  (Micro-ROS)    │     │  (Data Lake)     │     │  (Streamlit)    │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
 **Stack Tecnológico:**
-- **Frontend**: Streamlit 1.36+ con estilos CSS personalizados
-- **Backend**: Python 3.10+ con PyMongo
-- **Base de Datos**: MongoDB Atlas (Cloud)
+- **Frontend**: Streamlit 1.36+ (Components-based Architecture)
+- **Backend**: Python 3.10+, PyMongo
+- **Base de Datos**: MongoDB Atlas (Schema-less)
 - **Visualización**: Plotly Express
 - **Procesamiento**: Pandas, NumPy
 
@@ -52,7 +66,7 @@ Plataforma web para la supervisión remota de parámetros fisicoquímicos críti
 ## 📁 Estructura del Proyecto
 
 ```
-Biofloc-Monitor-UCN/
+Core-IoT-Monitor/
 ├── Home.py                    # Punto de entrada y navegación
 ├── requirements.txt           # Dependencias del proyecto
 ├── .env                       # Variables de entorno (NO en git)
@@ -98,8 +112,8 @@ Biofloc-Monitor-UCN/
 ### 1. Clonar el Repositorio
 
 ```bash
-git clone https://github.com/Marton1123/Biofloc-Monitor-UCN.git
-cd Biofloc-Monitor-UCN
+git clone https://github.com/Marton1123/Core-IoT-Monitor.git
+cd Core-IoT-Monitor
 ```
 
 ### 2. Crear Entorno Virtual (Anaconda)

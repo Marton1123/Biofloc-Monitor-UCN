@@ -72,7 +72,7 @@ def route_to_page():
 
 def main():
     st.set_page_config(
-        page_title="Sistema de Monitoreo",
+        page_title="Core-IoT-Monitor",
         page_icon=None,
         layout="wide",
         initial_sidebar_state="collapsed"
