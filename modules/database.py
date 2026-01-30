@@ -6,7 +6,7 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import certifi
 from dotenv import load_dotenv
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime, timedelta, timezone
 
 # Cargar variables de entorno
@@ -35,6 +35,7 @@ def get_mongo_client(uri: str) -> Optional[MongoClient]:
 
 class DatabaseConnection:
     CONFIG_COLLECTION = "system_config"
+    DEVICES_COLLECTION = "devices"
 
     def __init__(self):
         self.sources = []
@@ -101,11 +102,15 @@ class DatabaseConnection:
                 else:
                     final_ts = pd.to_datetime(raw_ts, unit='s', utc=True).to_pydatetime()
             elif isinstance(raw_ts, str):
-                final_ts = pd.to_datetime(raw_ts, errors='coerce', utc=True)
-                if not pd.isna(final_ts):
-                     final_ts = final_ts.to_pydatetime()
-                else:
-                     final_ts = None
+                # Soporte para ISO8601 con offset (e.g., 2026-01-30T11:01:56-0300)
+                try:
+                    # Intento directo first (es mas rapido)
+                    final_ts = datetime.fromisoformat(raw_ts)
+                except ValueError:
+                    final_ts = pd.to_datetime(raw_ts, errors='coerce', utc=True)
+                    if pd.isna(final_ts): final_ts = None
+                    else: final_ts = final_ts.to_pydatetime()
+
             elif isinstance(raw_ts, datetime):
                 final_ts = raw_ts
                 # Si pymongo nos da naive, asumimos UTC manualmente (caso raro con tz_aware=True)
@@ -116,7 +121,7 @@ class DatabaseConnection:
         
         if final_ts is not None:
              if final_ts.tzinfo is not None:
-                 # Si viene con zona horaria (UTC de Mongo), convertir a Chile (UTC-3)
+                 # Si viene con zona horaria (UTC de Mongo o Offset), convertir a Chile (UTC-3)
                  chile_tz = timezone(timedelta(hours=-3))
                  final_ts = final_ts.astimezone(chile_tz)
                  final_ts = final_ts.replace(tzinfo=None) # Hacer naive para compatibilidad interna
@@ -148,7 +153,7 @@ class DatabaseConnection:
                 final_value = value
             
             # Solo agregar si es un valor numérico válido
-            if final_value is not None and norm_key not in normalized_sensors:
+            if final_value is not None: 
                 try:
                     normalized_sensors[norm_key] = float(final_value)
                 except (ValueError, TypeError):
@@ -183,9 +188,6 @@ class DatabaseConnection:
                     norm_doc = self._normalize_document(raw_doc)
                     dev_id = norm_doc["device_id"]
                     
-                    # Prioridad: el primero que llega gana (usualmente el de la fuente principal si iteration order es fijo)
-                    # O podrias querer ver duplicados si tienen mismo ID pero diferente fuente? 
-                    # Asumiremos IDs unicos globales o que queremos unificar
                     if dev_id and dev_id != "unknown" and dev_id not in seen_devices:
                         seen_devices.add(dev_id)
                         all_docs.append(norm_doc)
@@ -249,7 +251,7 @@ class DatabaseConnection:
                 # Intentar con sort primero (obtiene datos recientes)
                 try:
                     # Usar mismo limite para todas las fuentes
-                    cursor = collection.find(mongo_query).sort("_id", -1).limit(limit_per_source)
+                    cursor = collection.find(mongo_query).sort("timestamp", -1).limit(limit_per_source)
                     raw_documents = list(cursor)
                 except Exception as sort_error:
                     # Si falla el sort (memory limit), intentar sin sort
@@ -291,20 +293,20 @@ class DatabaseConnection:
         
         return df
 
-    # --- MÉTODOS DE CONFIGURACIÓN (Solo en Fuente Principal) ---
-    # Por seguridad y simplicidad, guardamos configs solo en la DB principal
+    # --- MÉTODOS DE CONFIGURACIÓN & DISPOSITIVOS ---
     
-    def _get_primary_collection(self, coll_name):
+    def _get_primary_db(self):
         if not self.sources: return None
-        # Asumimos que la primera fuente es la principal (donde guardamos configs)
-        source = self.sources[0]
-        try:
-             return source["client"][source["db"]][coll_name]
-        except:
-             return None
+        return self.sources[0]["client"][self.sources[0]["db"]]
 
-    def get_config(self, config_id: str = "sensor_thresholds") -> Optional[Dict[str, Any]]:
-        coll = self._get_primary_collection(self.CONFIG_COLLECTION)
+    def _get_collection(self, coll_name):
+        db = self._get_primary_db()
+        if db is not None:
+             return db[coll_name]
+        return None
+
+    def get_config(self, config_id: str) -> Optional[Dict[str, Any]]:
+        coll = self._get_collection(self.CONFIG_COLLECTION)
         if coll is None: return None
         try:
             return coll.find_one({"_id": config_id})
@@ -312,7 +314,7 @@ class DatabaseConnection:
             return None
 
     def save_config(self, config_id: str, config_data: Dict[str, Any]) -> bool:
-        coll = self._get_primary_collection(self.CONFIG_COLLECTION)
+        coll = self._get_collection(self.CONFIG_COLLECTION)
         if coll is None: return False
         try:
             config_data["_id"] = config_id
@@ -322,9 +324,45 @@ class DatabaseConnection:
         except Exception as e:
             st.error(f"Error al guardar config: {str(e)}")
             return False
+            
+    # --- MÉTODOS PARA COLECCIÓN DE DISPOSITIVOS (NUEVO ESQUEMA) ---
+    
+    def get_all_registered_devices(self) -> List[Dict[str, Any]]:
+        """Recupera todos los documentos de la colección 'devices'."""
+        coll = self._get_collection(self.DEVICES_COLLECTION)
+        if coll is None: return []
+        try:
+            return list(coll.find({}))
+        except Exception as e:
+            print(f"Error fetching devices metadata: {e}")
+            return []
+
+    def get_device_doc(self, device_id: str) -> Optional[Dict[str, Any]]:
+        coll = self._get_collection(self.DEVICES_COLLECTION)
+        if coll is None: return None
+        try:
+            return coll.find_one({"_id": device_id})
+        except Exception:
+            return None
+
+    def update_device_doc(self, device_id: str, update_data: Dict[str, Any]) -> bool:
+        """Actualiza campos específicos de un dispositivo (partial update)."""
+        coll = self._get_collection(self.DEVICES_COLLECTION)
+        if coll is None: return False
+        try:
+            # Asegurar que se haga un set para no borrar otros campos
+            result = coll.update_one(
+                {"_id": device_id},
+                {"$set": update_data},
+                upsert=True
+            )
+            return result.acknowledged
+        except Exception as e:
+            st.error(f"Error actualizando dispositivo {device_id}: {e}")
+            return False
 
     def delete_config(self, config_id: str) -> bool:
-        coll = self._get_primary_collection(self.CONFIG_COLLECTION)
+        coll = self._get_collection(self.CONFIG_COLLECTION)
         if coll is None: return False
         try:
             result = coll.delete_one({"_id": config_id})
