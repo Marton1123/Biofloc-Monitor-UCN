@@ -420,14 +420,17 @@ def build_card_html(device: DeviceInfo, thresholds: Dict, config_manager: Config
     """Genera el HTML de una tarjeta de dispositivo con altura fija."""
     
     # Obtener nombre y ubicación personalizados
-    display_name = device.device_id
+    display_name = getattr(device, "external_alias", None)
+    if pd.isna(display_name) or not display_name:
+        display_name = device.device_id
+        
     display_loc = device.location if device.location else "Sin ubicacion"
     
     if config_manager:
         meta = config_manager.get_device_info(device.device_id)
-        if meta.get("alias", "").strip(): 
+        if (meta.get("alias") or "").strip(): 
             display_name = meta.get("alias")
-        if meta.get("location", "").strip(): 
+        if (meta.get("location") or "").strip(): 
             display_loc = meta.get("location")
     
     # Determinar estado y colores

@@ -1,3 +1,4 @@
+
 import os
 import time
 import pandas as pd
@@ -57,14 +58,14 @@ class DatabaseConnection:
             telem_coll=os.getenv("MONGO_COLLECTION_2"),
             dev_coll=os.getenv("MONGO_DEVICES_COLLECTION_2"),
             name="Secondary",
-            is_writable=False 
+            is_writable=True # Habilitamos escritura para corregir datos del Partner 
         )
 
     def _add_source(self, uri, db_name, telem_coll, dev_coll, name, is_writable=False):
         """Helper para registrar fuentes de datos de forma modular."""
         if uri and db_name:
             client = get_mongo_client(uri)
-            if client:
+            if client is not None:
                 self.sources.append({
                     "name": name,
                     "client": client,
@@ -190,20 +191,33 @@ class DatabaseConnection:
             "original_source": raw_doc # Guardar original por si acaso
         }
 
-    # --- MÉTODO PARA DASHBOARD (Multi-DB Telemetría) ---
+    # --- MÉTODO PARA DASHBOARD (Multi-DB Telemetría + Registro + Historical Fallback) ---
     def get_latest_by_device(self, retries: int = 2) -> pd.DataFrame:
+        """
+        Obtiene el estado más reciente de TODOS los dispositivos.
+        Estrategia 'Registry-Historical': 
+        1. Obtiene la lista maestra de dispositivos registrados (Metadata).
+        2. Obtiene la telemetría reciente (Live).
+        3. Para los faltantes, busca su ÚLTIMO dato histórico.
+        """
         if not self.sources: return pd.DataFrame()
+        
+        # 1. Obtener Universo de Dispositivos Registrados (Master List)
+        registered_devices = self.get_all_registered_devices()
+        known_map = {d["_id"]: d for d in registered_devices}
         
         all_docs = []
         seen_devices = set()
         
+        # 2. Obtener Telemetría Reciente (Live Data)
         for source in self.sources:
             if not source["coll_telemetry"]: continue
             try:
                 db = source["client"][source["db"]]
                 collection = db[source["coll_telemetry"]]
                 
-                cursor = collection.find({}).sort("timestamp", -1).limit(1000)
+                # Limitamos a 2000 para tener más chance de encontrar dispositivos "lentos"
+                cursor = collection.find({}).sort("timestamp", -1).limit(2000)
                 documents = list(cursor)
                 
                 for raw_doc in documents:
@@ -211,6 +225,14 @@ class DatabaseConnection:
                     dev_id = norm_doc["device_id"]
                     
                     if dev_id and dev_id != "unknown" and dev_id not in seen_devices:
+                        # Si tenemos metadata registrada para este ID, enriquecemos la location
+                        if dev_id in known_map:
+                            meta = known_map[dev_id]
+                            reg_loc = meta.get("location")
+                            reg_alias = meta.get("alias")
+                            if reg_loc: norm_doc["location"] = reg_loc
+                            if reg_alias: norm_doc["external_alias"] = reg_alias
+
                         seen_devices.add(dev_id)
                         all_docs.append(norm_doc)
                         
@@ -218,9 +240,49 @@ class DatabaseConnection:
                 print(f"Error fetching telemetry from {source['name']}: {str(e)}")
                 continue
 
-        return self._rows_to_dataframe(all_docs)
+        # 3. Recuperar Dispositivos Faltantes (Historical Fetch)
+        for dev_id, meta in known_map.items():
+            if dev_id not in seen_devices:
+                # Buscar el último dato real en la historia
+                last_known_df = self.get_latest_for_single_device(dev_id)
+                reg_alias = meta.get("alias")
+                
+                if not last_known_df.empty:
+                    # Usar el último estado conocido
+                    rec = last_known_df.iloc[0].to_dict()
+                    
+                    # Asegurar ubicación de metadata si existe
+                    reg_loc = meta.get("location")
+                    if reg_loc: rec["location"] = reg_loc
+                    
+                    # Re-estructurar para all_docs
+                    doc_struct = {
+                        "device_id": rec["device_id"],
+                        "timestamp": rec["timestamp"],
+                        "location": rec["location"],
+                        "sensors": rec["sensor_data"], 
+                        "alerts": rec["alerts"], 
+                        "_source_id": "historical_fetch"
+                    }
+                    if reg_alias: doc_struct["external_alias"] = reg_alias
+                    all_docs.append(doc_struct)
+                else:
+                    # Solo falla a gris si NUNCA ha enviado datos
+                    doc_struct = {
+                        "device_id": dev_id,
+                        "timestamp": None,
+                        "location": meta.get("location", "Desconocido"),
+                        "sensors": {},
+                        "alerts": [],
+                        "_source_id": "registry_fallback"
+                    }
+                    if reg_alias: doc_struct["external_alias"] = reg_alias
+                    all_docs.append(doc_struct)
+
+        return self._rows_to_dataframe_mixed(all_docs)
 
     def get_latest_for_single_device(self, device_id: str) -> pd.DataFrame:
+        """Busca el dispositivo en todas las fuentes hasta encontrarlo."""
         if not self.sources: return pd.DataFrame()
         
         for source in self.sources:
@@ -231,6 +293,7 @@ class DatabaseConnection:
                 
                 query = {"$or": [{"device_id": device_id}, {"dispositivo_id": device_id}]}
                 
+                # Buscar solo el ultimo
                 doc = collection.find_one(query, sort=[("timestamp", -1)])
                 if doc:
                     norm_doc = self._normalize_document(doc)
@@ -306,8 +369,6 @@ class DatabaseConnection:
                 for raw in raw_list:
                     norm = self._normalize_device_doc(raw)
                     d_id = norm["_id"]
-                    # Si ya existe (ej. estaba en Primary), NO sobrescribir con Secondary
-                    # Asumimos prioridad por orden de sources (Primary primero)
                     if d_id and d_id not in all_devices:
                         all_devices[d_id] = norm
                         
@@ -348,7 +409,6 @@ class DatabaseConnection:
                         target_source = source
                         break
                     else:
-                        # Existe pero es Read-Only (ej. DB del Partner)
                         st.warning(f"El dispositivo {device_id} pertenece a una BD externa de solo lectura.")
                         return False
             except: continue
@@ -368,18 +428,10 @@ class DatabaseConnection:
         try:
             coll = target_source["client"][target_source["db"]][target_source["coll_devices"]]
             
-            # Map update keys si es necesario (Adapter Inverso)
-            # Como usamos update $set, solo mapeamos las keys que sabemos que cambian de nombre
             final_update_data = {}
             for k, v in update_data.items():
                 if k == "location" and "nombre" in target_source.get("mapping", []): 
-                    # Ejemplo hipotetico, aqui asumimos que 'ubicacion' es el standart de partner
-                    # Pero para simplificar, si es la DB partner y es readonly, nunca llegamos aqui.
                     pass
-                
-                # Si estamos escribiendo en la nuestra (devices), el esquema es directo.
-                # Si escribieramos en la de partner (devices_data), tendriamos que mapear 'location' -> 'ubicacion'
-                # PERO como definimos la source 2 como ReadOnly (writable=False), no necesitamos mapear escritura compleja por ahora.
                 final_update_data[k] = v
             
             result = coll.update_one(
@@ -394,16 +446,15 @@ class DatabaseConnection:
 
     # --- CONFIG LEGACY / GLOBAL ---
     def get_config(self, config_id: str) -> Optional[Dict[str, Any]]:
-        # La config global solo vive en la primaria
         db = self._get_primary_db()
-        if not db: return None
+        if db is None: return None
         try:
             return db[self.CONFIG_COLLECTION].find_one({"_id": config_id})
         except: return None
 
     def save_config(self, config_id: str, config_data: Dict[str, Any]) -> bool:
         db = self._get_primary_db()
-        if not db: return False
+        if db is None: return False
         try:
             config_data["_id"] = config_id
             config_data["last_updated"] = datetime.now().isoformat()
@@ -412,7 +463,7 @@ class DatabaseConnection:
         
     def delete_config(self, config_id: str) -> bool:
         db = self._get_primary_db()
-        if not db: return False
+        if db is None: return False
         try:
             return db[self.CONFIG_COLLECTION].delete_one({"_id": config_id}).deleted_count > 0
         except: return False
@@ -433,6 +484,29 @@ class DatabaseConnection:
                 "location": doc["location"],
                 "sensor_data": doc["sensors"], 
                 "alerts": doc["alerts"]
+            })
+        df = pd.DataFrame(processed)
+        if "timestamp" in df.columns and not df.empty:
+             df["timestamp"] = pd.to_datetime(df["timestamp"], errors='coerce')
+        return df
+
+    def _rows_to_dataframe_mixed(self, mixed_docs: List[Dict[str, Any]]) -> pd.DataFrame:
+        """Helper para all_docs que puede contener docs frescos o recuperados de historia."""
+        processed = []
+        for doc in mixed_docs:
+            # Detectar si viene de live scan (sensors) o fallback (sensor_data)
+            s_data = doc.get("sensors") if "sensors" in doc else doc.get("sensor_data", {})
+            
+            # Alias externo
+            ext_alias = doc.get("external_alias")
+            
+            processed.append({
+                "device_id": doc["device_id"],
+                "timestamp": doc["timestamp"],
+                "location": doc["location"],
+                "sensor_data": s_data, 
+                "alerts": doc.get("alerts", []),
+                "external_alias": ext_alias # Pasamos al dataframe
             })
         df = pd.DataFrame(processed)
         if "timestamp" in df.columns and not df.empty:

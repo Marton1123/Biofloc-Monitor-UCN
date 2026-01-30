@@ -54,7 +54,7 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime, devices: Option
         def load_source(source):
             try:
                 database = source["client"][source["db"]]
-                collection = database[source["coll"]]
+                collection = database[source["coll_telemetry"]]
                 
                 # Base Query de tiempo EXTENDIDA AMBOS LADOS (+/- 1 DIA)
                 time_query = {

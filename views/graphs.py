@@ -163,7 +163,7 @@ def cargar_historial_completo() -> pd.DataFrame:
             """Función auxiliar para cargar datos de una fuente individual."""
             try:
                 database = source["client"][source["db"]]
-                collection = database[source["coll"]]
+                collection = database[source["coll_telemetry"]]
                 
                 # Proyección optimizada
                 projection = {
@@ -231,6 +231,20 @@ def cargar_historial_completo() -> pd.DataFrame:
         # Normalizar columnas de sensores
         df = normalize_sensor_columns(df)
         
+        # =====================================================================
+        # LIMPIEZA DE OUTLIERS Y DATOS IMPOSIBLES
+        # =====================================================================
+        # Temperatura: 0 a 60 (Biofloc no se congela ni hierve)
+        if 'temperature' in df.columns:
+            cnt_pre = len(df)
+            df = df[(df['temperature'].isna()) | ((df['temperature'] >= 0) & (df['temperature'] <= 60))]
+            if len(df) < cnt_pre:
+                print(f"[graphs.py] Filtrados {cnt_pre - len(df)} registros con Temperatura fuera de rango (0-60)")
+
+        # pH: 0 a 14 (Rango físico químico)
+        if 'ph' in df.columns:
+            df = df[(df['ph'].isna()) | ((df['ph'] >= 0) & (df['ph'] <= 14))]
+
         # =====================================================================
         # FILTRAR TIMESTAMPS INVÁLIDOS
         # Excluir registros con fechas anteriores a 2020 (datos corruptos)
