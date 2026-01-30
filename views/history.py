@@ -15,24 +15,39 @@ ICON_SETTINGS = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" 
 ICON_INFO = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
 ICON_EYE = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
 ICON_ALERT = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+ICON_CLOCK = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+ICON_LIST = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>'
+ICON_CPU = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>'
 
 # =============================================================================
 # FUNCIÓN DE CARGA OPTIMIZADA (Paralela + Caché por Rango)
 # =============================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
-def cargar_datos_rango(start_date: datetime, end_date: datetime) -> pd.DataFrame:
+def cargar_datos_rango(start_date: datetime, end_date: datetime, devices: Optional[List[str]] = None) -> pd.DataFrame:
     """
-    Carga datos de todas las fuentes en paralelo para un rango específico.
-    Optimizado con filtros nativos de MongoDB y normalización robusta.
+    Carga datos corrigiendo desfases de zona horaria (UTC vs Local).
+    Estrategia: Busca 1 día extra en el futuro para capturar datos UTC y luego normaliza a Local.
+    Opción para filtrar por devices directamente en BD.
     """
     start_time_total = time.time()
+    
+    # 1. Extender rango de búsqueda en DB generosamente (+/- 2 días)
+    # Esto asegura traer todos los registros desplazados por UTC antes de filtrar exactamente.
+    # El problema anterior era que +1 día a las 00:00 cortaba datos de las 02:00 UTC.
+    mongo_end_date = end_date + timedelta(days=2)
+    mongo_start_date = start_date - timedelta(days=2)
+    
+    # Normalizar inputs para comparaciones
+    if start_date.tzinfo: start_date = start_date.replace(tzinfo=None)
+    if end_date.tzinfo: end_date = end_date.replace(tzinfo=None)
+
     try:
         db = DatabaseConnection()
         if not db.sources: return pd.DataFrame()
 
-        # Preparar fechas para queries (ISO String y Date Object)
         start_iso = start_date.isoformat()
-        end_iso = end_date.isoformat()
+        mongo_start_iso = mongo_start_date.isoformat()
+        mongo_end_iso = mongo_end_date.isoformat()
         
         all_norm_docs = []
 
@@ -41,11 +56,11 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime) -> pd.DataFrame
                 database = source["client"][source["db"]]
                 collection = database[source["coll"]]
                 
-                # Query Híbrida: Rango de fechas con soporte Strings/Date
-                query = {
-                    "$and": [
-                        {"$or": [{"timestamp": {"$gte": start_date}}, {"timestamp": {"$gte": start_iso}}]},
-                        {"$or": [{"timestamp": {"$lte": end_date}},   {"timestamp": {"$lte": end_iso}}]}
+                # Base Query de tiempo EXTENDIDA AMBOS LADOS (+/- 1 DIA)
+                time_query = {
+                    "$or": [
+                        {"timestamp": {"$gte": mongo_start_date, "$lte": mongo_end_date}},
+                        {"timestamp": {"$gte": mongo_start_iso, "$lte": mongo_end_iso}}
                     ]
                 }
                 
@@ -54,33 +69,47 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime) -> pd.DataFrame
                     'sensors': 1, 'datos': 1, 'location': 1, 'metadata': 1
                 }
                 
-                # Cargar
-                cursor = collection.find(query, projection)
-                # Intentar sort si es posible
-                try:
-                    cursor = cursor.sort('timestamp', -1)
-                except:
-                    pass
-                
+                # Sin sort en DB para velocidad
+                final_query = time_query
+                cursor = collection.find(final_query, projection)
                 raw_docs = list(cursor)
                 
-                # Normalizar
                 valid_docs = []
                 for doc in raw_docs:
                     norm = db._normalize_document(doc)
                     if norm.get("timestamp") and norm.get("device_id") != "unknown":
-                        # Validar rango exacto post-normalización (para seguridad)
+                        
+                        # FILTRO DE DISPOSITIVOS (EN MEMORIA)
+                        if devices and norm.get("device_id") not in devices:
+                            continue
+
                         ts = norm["timestamp"]
-                        # Convertir a offset-naive para comparar si es necesario
-                        if ts.tzinfo and start_date.tzinfo is None:
-                            ts = ts.replace(tzinfo=None)
-                            
+                        ts_orig = ts # Para debug
+                        
+                        if isinstance(ts, str):
+                            ts = pd.to_datetime(ts)
+                        
+                        # CONVERSIÓN EXPLÍCITA A UTC-3 (CHILE)
+                        target_offset = timedelta(hours=-3)
+                        
+                        if isinstance(ts, datetime):
+                            if ts.tzinfo is not None:
+                                ts_utc = ts.astimezone(timezone.utc)
+                                ts_local = ts_utc + target_offset
+                                ts = ts_local.replace(tzinfo=None)
+                            else:
+                                # Naive: Asumimos ya local
+                                pass
+                        
+                        norm["timestamp"] = ts
+                        
+                        # Filtro FINAL EXACTO (Sin buffer, ya convertimos a local)
                         if start_date <= ts <= end_date:
                             valid_docs.append(norm)
-                            
+
                 return valid_docs
             except Exception as e:
-                print(f"Error cargando {source['name']}: {e}")
+                print(f"[history.py] Error en {source.get('name')}: {e}")
                 return []
 
         # Ejecución Paralela
@@ -94,19 +123,22 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime) -> pd.DataFrame
         # Convertir a DataFrame
         df = db._parse_historical_flat(all_norm_docs)
         
-        # Limpieza básica de columnas (local)
-        cols_map = {}
-        for c in df.columns:
-            clean = c.lower().strip()
-            if clean in ['temp', 'temperatura']: clean = 'temperature'
-            cols_map[c] = clean
-        df = df.rename(columns=cols_map)
+        # Limpieza columnas
+        try:
+            cols_map = {}
+            for c in df.columns:
+                clean = c.lower().strip()
+                if clean in ['temp', 'temperatura']: clean = 'temperature'
+                cols_map[c] = clean
+            df = df.rename(columns=cols_map)
+        except:
+            pass
         
-        # Ordenar final
+        # Ordenar DESC
         if 'timestamp' in df.columns:
             df = df.sort_values('timestamp', ascending=False)
             
-        print(f"[history.py] Carga completada en {time.time() - start_time_total:.2f}s. Registros: {len(df)}")
+        print(f"[history.py] Total Global DataFrame: {len(df)} registros.")
         return df
 
     except Exception as e:
@@ -129,7 +161,8 @@ def show_view():
     with c1:
         st.subheader("Base de Datos Histórica")
     with c2:
-        if st.button("Actualizar Tabla", type="primary"):
+        if st.button("Actualizar Tabla", type="primary", key="refresh_btn", help="Recargar datos"):
+            cargar_datos_rango.clear()
             st.rerun()
 
     # --- 1. CARGA INICIAL ---
@@ -143,11 +176,26 @@ def show_view():
 
     # --- 2. FILTROS GENERALES ---
     # --- 2. BARRA DE CONTROL ---
+    
+    # Pre-cargar dispositivos conocidos para el filtro
+    known_devices = []
+    alias_map_pre = {}
+    try:
+        cm_pre = ConfigManager(DatabaseConnection())
+        meta_pre = cm_pre.get_device_metadata()
+        if meta_pre:
+            known_devices = sorted(list(meta_pre.keys()))
+            for k, v in meta_pre.items():
+                if isinstance(v, dict) and v.get("alias"):
+                    alias_map_pre[k] = v.get("alias")
+    except:
+        pass
+
     with st.container(border=True):
         st.markdown(f"<div style='margin-bottom: 10px; font-weight: 600; color: #475569; display:flex; align-items:center; gap:8px;'>{ICON_SEARCH} Panel de Control</div>", unsafe_allow_html=True)
         
-        # Fila 1: Fechas y Acción Principal
-        c_date, c_btn = st.columns([3, 1])
+        # Fila 1: Fechas, Dispositivos y Acción
+        c_date, c_dev, c_btn = st.columns([2, 2, 1.2])
         
         with c_date:
             today = datetime.now().date()
@@ -160,10 +208,21 @@ def show_view():
                 format="DD/MM/YYYY"
             )
             
+        with c_dev:
+            def fmt_dev_pre(x):
+                return alias_map_pre.get(x, x)
+                
+            sel_devices_pre = st.multiselect(
+                "Dispositivos (Dejar vacío para todos)",
+                options=known_devices,
+                format_func=fmt_dev_pre,
+                placeholder="Seleccionar sensores..."
+            )
+            
         with c_btn:
              # Espacio para alinear con el input
              st.markdown('<div style="margin-top: 29px;"></div>', unsafe_allow_html=True)
-             buscar = st.button("BUSCAR REGISTROS", type="primary", width="stretch")
+             buscar = st.button("BUSCAR REGISTROS", type="primary", use_container_width=True)
 
         
         if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -177,10 +236,24 @@ def show_view():
         # Inicializar estado
         if 'history_data' not in st.session_state:
             st.session_state.history_data = None
+        if 'last_params' not in st.session_state:
+            st.session_state.last_params = None
+            
+        # Detectar cambios en filtros para limpiar vista vieja
+        # Tupla hashable de params actuales
+        current_params = (start_time, end_time, tuple(sorted(sel_devices_pre)))
+        
+        if st.session_state.last_params != current_params and not buscar:
+            # Si cambiaron los params y NO se ha pulsado buscar aun -> Limpiar
+            st.session_state.history_data = None
             
         if buscar:
+            # Definir lista de devices a buscar (None = Todos)
+            devs_to_search = sel_devices_pre if sel_devices_pre else None
+            
             with st.spinner(f"Consultando..."):
-                st.session_state.history_data = cargar_datos_rango(start_time, end_time)
+                st.session_state.history_data = cargar_datos_rango(start_time, end_time, devs_to_search)
+                st.session_state.last_params = current_params
                 
         df = st.session_state.history_data
 
@@ -188,13 +261,13 @@ def show_view():
             st.markdown(f"""
             <div style="margin-top:20px; padding:15px; border-radius:8px; background-color:#f8fafc; border:1px dashed #cbd5e1; color:#64748b; display:flex; gap:10px; align-items:center;">
                 {ICON_INFO} 
-                <span>Selecciona un rango de fechas y presiona <b>'BUSCAR REGISTROS'</b> para comenzar.</span>
+                <span>Configura los filtros y presiona <b>'BUSCAR REGISTROS'</b> para ver los datos.</span>
             </div>
             """, unsafe_allow_html=True)
             return
             
         if df.empty:
-            st.warning("No se encontraron registros en el período seleccionado.")
+            st.warning("No se encontraron registros.")
             return
 
         # Preprocesamiento
@@ -204,35 +277,20 @@ def show_view():
             if not df.empty and df['timestamp'].dt.tz is not None:
                 df['timestamp'] = df['timestamp'].dt.tz_localize(None)
 
-        # --- FILTROS SECUNDARIOS (Solo visibles con datos) ---
+        # --- FILTROS SECUNDARIOS (Texto) ---
         st.markdown("---")
-        cf1, cf2 = st.columns(2)
         
-        # Mapa de alias
-        alias_map = {}
-        try:
-            cm = ConfigManager(DatabaseConnection())
-            meta = cm.get_device_metadata()
-            for dev_id, info in meta.items():
-                if info.get("alias"):
-                    alias_map[dev_id] = info.get("alias")
-        except:
-            pass
-
-        devices = sorted(df['device_id'].unique().tolist())
-        
+        cf1, cf2 = st.columns([3, 1])
         with cf1:
-            def format_dev(x):
-                return f"{alias_map.get(x, x)}"
-            
-            sel_devices = st.multiselect("Filtrar por Dispositivo", devices, default=devices, format_func=format_dev)
-            
-        with cf2:
-             text_search = st.text_input("Filtrar por Texto", placeholder="ID, Ubicación...")
+             text_search = st.text_input("Filtrar resultados por Texto (ID, Ubicación)", placeholder="Buscar en resultados cargados...")
+
 
     # Aplicar Filtros
-    if sel_devices:
-        df = df[df['device_id'].isin(sel_devices)]
+    
+    # Referenciar mapa de alias para uso local
+    alias_map = alias_map_pre
+
+    # (El filtro de dispositivos ya se aplicó en la consulta a BD)
     if text_search:
         s = text_search.lower()
         if 'location' not in df.columns: df['location'] = ""
@@ -243,6 +301,45 @@ def show_view():
                 df['location'].astype(str).str.lower().str.contains(s) |
                 df['temp_alias'].str.contains(s)]
         df = df.drop(columns=['temp_alias'])
+
+    # --- MÉTRICAS DE ESTADO ---
+    if not df.empty:
+        try:
+            # Calcular desglose
+            dev_counts = df['device_id'].value_counts().reset_index()
+            dev_counts.columns = ['device_id', 'count']
+            dev_counts['alias'] = dev_counts['device_id'].apply(lambda x: alias_map.get(x, x))
+            
+            summary_items = []
+            for _, row in dev_counts.iterrows():
+                summary_items.append(f"<span style='background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:4px;'>{row['alias']}: <b>{row['count']}</b></span>")
+            
+            dev_summary_html = " ".join(summary_items)
+
+            min_ts = df['timestamp'].min().strftime('%d/%m %H:%M:%S')
+            max_ts = df['timestamp'].max().strftime('%d/%m %H:%M:%S')
+            total_devs = df['device_id'].nunique()
+            
+            st.markdown(f"""
+            <div style="background-color:#ffffff; padding:15px; border-radius:8px; font-size:0.9rem; color:#334155; border:1px solid #e2e8f0; margin-top:15px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:20px; border-bottom:1px solid #f1f5f9; padding-bottom:10px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        {ICON_CLOCK} <span style="font-weight:600;">Rango:</span> {min_ts} — {max_ts}
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        {ICON_LIST} <span style="font-weight:600;">Total Registros:</span> {len(df)}
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        {ICON_CPU} <span style="font-weight:600;">Dispositivos:</span> {total_devs}
+                    </div>
+                </div>
+                <div style="font-size:0.8rem; display:flex; align-items:center; gap:8px;">
+                    <span style="color:#64748b;">Detalle:</span> {dev_summary_html}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Error métricas: {e}")
 
     # --- 3. SECCIÓN DE DESCARGA ---
     st.markdown("---")
@@ -317,7 +414,8 @@ def show_view():
     st.markdown("---")
 
     # --- 5. VISTA PREVIA ---
-    st.markdown(f"**Vista Previa ({min(500, len(df))} registros)**")
+    # --- 5. VISTA PREVIA ---
+    st.markdown(f"**Vista Previa (Últimos {min(500, len(df))} registros)**")
     
     # Preparar DF para mostrar (Alias en vez de ID)
     df_show = df.head(500).copy()

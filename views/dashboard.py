@@ -563,7 +563,7 @@ def build_card_html(device: DeviceInfo, thresholds: Dict, config_manager: Config
         if dt.date() == datetime.now().date():
             ts_str = dt.strftime("%H:%M:%S")
         else:
-            ts_str = dt.strftime("%d/%m %H:%M")
+            ts_str = dt.strftime("%d/%m %H:%M:%S")
 
     # Construir tarjeta completa
     card = f'''
