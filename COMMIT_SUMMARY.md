@@ -18,10 +18,15 @@ CARACTERÍSTICAS PRINCIPALES:
 - Gráficas: Filtrado de dispositivos offline en selección
 - Dashboard: Corrección de estados stale al navegar entre páginas
 - Filtro "Por Estado: Offline" respeta selección explícita del usuario
+- Fix crítico: Carga correcta de umbrales personalizados (merge `umbrales`/`thresholds`)
+- Estandarización: Guardado de configuración en esquema español (`umbrales`)
+- UX: Formato correcto de nombres técnicos (pH, Temperatura) en Settings
 
 ARCHIVOS MODIFICADOS:
 - views/dashboard.py: Checkbox offline, filtros inteligentes, fix estados stale
 - views/graphs.py: Auto-update, filtrado offline, DeviceManager integration
+- views/settings.py: Fix capitalización (pH), tooltips
+- modules/config_manager.py: Fix carga/guardado de umbrales
 - modules/database.py: Multi-schema normalization (de versión anterior)
 - views/history.py: Logging detallado (de versión anterior)
 - views/settings.py: UI mejorada con tooltips (de versión anterior)
@@ -116,6 +121,19 @@ if filter_type == "Por Estado":
 
 ---
 
+### `modules/config_manager.py`
+
+#### **Fix Crítico: Carga de Umbrales Personalizados**
+**Problema**: El sistema solo leía `umbrales` (español) o `thresholds` (inglés) de forma excluyente, ignorando configuraciones personalizadas si existía una clave legacy vacía.
+**Solución**: 
+- Implementado merge inteligente de ambas claves (`thresholds` y `umbrales`).
+- Prioridad a `umbrales` (configuración más reciente).
+- Estandarizado el guardado en `umbrales.{sensor}` para mantener esquema en español.
+
+**Resultado**: Las alertas y rangos personalizados ahora se aplican correctamente en el Dashboard.
+
+---
+
 ### `views/graphs.py`
 
 #### 1. **Importación de DeviceManager (Línea 16)**
@@ -194,6 +212,15 @@ elif 'graphs_prev_devices' in st.session_state:
 - Primera carga → Sin dispositivos precargados ✓
 - Desde dashboard → Precarga el dispositivo clickeado ✓  
 - Navegación posterior → Mantiene última selección ✓
+
+---
+
+### `views/settings.py`
+
+#### **Mejoras de UX y Formato**
+- **Nombres Técnicos**: Implementada función `format_param_name` para corregir capitalización (ej: "Ph" → "pH").
+- **Visualización**: Selectores y formularios ahora usan los nombres formateados correctamente.
+- **Tooltips**: Agregadas explicaciones detalladas para los campos de configuración de umbrales.
 
 ---
 

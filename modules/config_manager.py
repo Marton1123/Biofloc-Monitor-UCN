@@ -143,9 +143,17 @@ class ConfigManager:
         for d in raw_devices:
             d_id = d.get("_id")
             if d_id:
-                # Normalizar umbrales
-                raw_umbrales = d.get("umbrales", {})
-                norm_thresholds = self._normalize_thresholds(raw_umbrales)
+                # Normalizar umbrales: Fusionar 'thresholds' (legacy) y 'umbrales' (UI actual)
+                # Prioridad: 'umbrales' sobrescribe 'thresholds' si hay conflictos
+                t_legacy = d.get("thresholds", {})
+                t_ui = d.get("umbrales", {})
+                
+                # Asegurar que sean dicts
+                if not isinstance(t_legacy, dict): t_legacy = {}
+                if not isinstance(t_ui, dict): t_ui = {}
+                
+                raw_combined = {**t_legacy, **t_ui}
+                norm_thresholds = self._normalize_thresholds(raw_combined)
                 
                 meta_map[d_id] = {
                     "alias": d.get("alias", ""),

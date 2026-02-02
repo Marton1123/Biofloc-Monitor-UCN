@@ -14,6 +14,17 @@ ICON_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" vie
 ICON_EDIT = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
 
 
+def format_param_name(name: str) -> str:
+    """Formatea nombres técnicos correctamente (ej: ph -> pH)."""
+    s = str(name).lower()
+    special_cases = {
+        'ph': 'pH',
+        'temperature': 'Temperatura'
+    }
+    return special_cases.get(s, s.replace('_', ' ').title())
+
+
+
 def discover_available_params(df: pd.DataFrame, device_id: str) -> List[str]:
     """
     Analiza las filas recientes del DataFrame para encontrar parámetros numéricos
@@ -166,7 +177,7 @@ def show_view():
                     if st.checkbox("Ver Debug Data"):
                          st.write(recent_df[recent_df['device_id']==target_dev].head(1).to_dict())
                 else:
-                    target_param = st.selectbox("2. Parámetro", valid_params, format_func=lambda x: str(x).replace('_', ' ').title())
+                    target_param = st.selectbox("2. Parámetro", valid_params, format_func=format_param_name)
                     
                     # Cargar Conf
                     base_conf = config_manager.get_all_configured_sensors().get(target_param, {})
@@ -181,7 +192,7 @@ def show_view():
 
                     # 3. Form
                     st.markdown("---")
-                    st.markdown(f"**Rangos para '{target_param.upper()}' en '{target_dev}'**")
+                    st.markdown(f"**Rangos para '{format_param_name(target_param)}' en '{target_dev}'**")
                     
                     with st.form(f"range_form_{target_dev}"):
                         c1, c2, c3 = st.columns(3)
@@ -247,7 +258,7 @@ def show_view():
                                     "max_value": val_opt_max,
                                     "critical_min": val_crit_min,
                                     "critical_max": val_crit_max,
-                                    "label": target_param.replace('_',' ').title()
+                                    "label": format_param_name(target_param)
                                 })
                                 
                                 if config_manager.update_device_threshold(target_dev, target_param, new_data):
