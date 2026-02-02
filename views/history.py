@@ -26,14 +26,11 @@ ICON_CPU = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewB
 def cargar_datos_rango(start_date: datetime, end_date: datetime, devices: Optional[List[str]] = None) -> pd.DataFrame:
     """
     Carga datos corrigiendo desfases de zona horaria (UTC vs Local).
-    Estrategia: Busca 1 día extra en el futuro para capturar datos UTC y luego normaliza a Local.
-    Opción para filtrar por devices directamente en BD.
+    Estrategia: Busca 2 días extra alrededor del rango para capturar datos UTC y luego normaliza a Local.
     """
     start_time_total = time.time()
     
     # 1. Extender rango de búsqueda en DB generosamente (+/- 2 días)
-    # Esto asegura traer todos los registros desplazados por UTC antes de filtrar exactamente.
-    # El problema anterior era que +1 día a las 00:00 cortaba datos de las 02:00 UTC.
     mongo_end_date = end_date + timedelta(days=2)
     mongo_start_date = start_date - timedelta(days=2)
     
@@ -45,18 +42,18 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime, devices: Option
         db = DatabaseConnection()
         if not db.sources: return pd.DataFrame()
 
-        start_iso = start_date.isoformat()
         mongo_start_iso = mongo_start_date.isoformat()
         mongo_end_iso = mongo_end_date.isoformat()
         
         all_norm_docs = []
 
         def load_source(source):
+            source_name = source.get('name', 'Unknown')
             try:
                 database = source["client"][source["db"]]
                 collection = database[source["coll_telemetry"]]
                 
-                # Base Query de tiempo EXTENDIDA AMBOS LADOS (+/- 1 DIA)
+                # Base Query de tiempo EXTENDIDA AMBOS LADOS (+/- 2 DIAS)
                 time_query = {
                     "$or": [
                         {"timestamp": {"$gte": mongo_start_date, "$lte": mongo_end_date}},
@@ -69,47 +66,65 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime, devices: Option
                     'sensors': 1, 'datos': 1, 'location': 1, 'metadata': 1
                 }
                 
-                # Sin sort en DB para velocidad
-                final_query = time_query
-                cursor = collection.find(final_query, projection)
+                cursor = collection.find(time_query, projection)
                 raw_docs = list(cursor)
                 
+                print(f"[history.py] Fuente '{source_name}': {len(raw_docs)} docs cargados de MongoDB")
+                
                 valid_docs = []
+                rejected_device = 0
+                rejected_timestamp = 0
+                rejected_range = 0
+                
                 for doc in raw_docs:
                     norm = db._normalize_document(doc)
-                    if norm.get("timestamp") and norm.get("device_id") != "unknown":
+                    
+                    # Check 1: Timestamp y device_id válidos
+                    if not norm.get("timestamp") or norm.get("device_id") == "unknown":
+                        rejected_timestamp += 1
+                        continue
                         
-                        # FILTRO DE DISPOSITIVOS (EN MEMORIA)
-                        if devices and norm.get("device_id") not in devices:
+                    # Check 2: Filtro de dispositivos (EN MEMORIA)
+                    if devices and norm.get("device_id") not in devices:
+                        rejected_device += 1
+                        continue
+
+                    ts = norm["timestamp"]
+                    
+                    # Convertir a datetime si es string
+                    if isinstance(ts, str):
+                        ts = pd.to_datetime(ts, errors='coerce')
+                        if pd.isna(ts):
+                            rejected_timestamp += 1
                             continue
+                    
+                    # CONVERSIÓN EXPLÍCITA A UTC-3 (CHILE)
+                    target_offset = timedelta(hours=-3)
+                    
+                    if isinstance(ts, datetime):
+                        if ts.tzinfo is not None:
+                            # Timestamp con zona horaria: convertir a local
+                            ts_utc = ts.astimezone(timezone.utc)
+                            ts_local = ts_utc + target_offset
+                            ts = ts_local.replace(tzinfo=None)
+                        else:
+                            # Naive: Asumimos ya está en hora local
+                            pass
+                    
+                    norm["timestamp"] = ts
+                    
+                    # Check 3: Filtro FINAL EXACTO
+                    if start_date <= ts <= end_date:
+                        valid_docs.append(norm)
+                    else:
+                        rejected_range += 1
 
-                        ts = norm["timestamp"]
-                        ts_orig = ts # Para debug
-                        
-                        if isinstance(ts, str):
-                            ts = pd.to_datetime(ts)
-                        
-                        # CONVERSIÓN EXPLÍCITA A UTC-3 (CHILE)
-                        target_offset = timedelta(hours=-3)
-                        
-                        if isinstance(ts, datetime):
-                            if ts.tzinfo is not None:
-                                ts_utc = ts.astimezone(timezone.utc)
-                                ts_local = ts_utc + target_offset
-                                ts = ts_local.replace(tzinfo=None)
-                            else:
-                                # Naive: Asumimos ya local
-                                pass
-                        
-                        norm["timestamp"] = ts
-                        
-                        # Filtro FINAL EXACTO (Sin buffer, ya convertimos a local)
-                        if start_date <= ts <= end_date:
-                            valid_docs.append(norm)
-
+                print(f"[history.py] Fuente '{source_name}': {len(valid_docs)} docs válidos")
+                print(f"[history.py] Fuente '{source_name}': Rechazados -> device_filter={rejected_device}, timestamp_invalid={rejected_timestamp}, out_of_range={rejected_range}")
+                
                 return valid_docs
             except Exception as e:
-                print(f"[history.py] Error en {source.get('name')}: {e}")
+                print(f"[history.py] ERROR en {source_name}: {e}")
                 return []
 
         # Ejecución Paralela
@@ -138,7 +153,8 @@ def cargar_datos_rango(start_date: datetime, end_date: datetime, devices: Option
         if 'timestamp' in df.columns:
             df = df.sort_values('timestamp', ascending=False)
             
-        print(f"[history.py] Total Global DataFrame: {len(df)} registros.")
+        elapsed = time.time() - start_time_total
+        print(f"[history.py] Total Global DataFrame: {len(df)} registros en {elapsed:.2f}s")
         return df
 
     except Exception as e:
@@ -151,7 +167,6 @@ def convert_df_to_csv(df):
 
 def convert_df_to_excel(df):
     output = BytesIO()
-    # Cambiado a openpyxl por compatibilidad
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Datos')
     return output.getvalue()
@@ -175,8 +190,6 @@ def show_view():
         return
 
     # --- 2. FILTROS GENERALES ---
-    # --- 2. BARRA DE CONTROL ---
-    
     # Pre-cargar dispositivos conocidos para el filtro
     known_devices = []
     alias_map_pre = {}
@@ -240,15 +253,12 @@ def show_view():
             st.session_state.last_params = None
             
         # Detectar cambios en filtros para limpiar vista vieja
-        # Tupla hashable de params actuales
         current_params = (start_time, end_time, tuple(sorted(sel_devices_pre)))
         
         if st.session_state.last_params != current_params and not buscar:
-            # Si cambiaron los params y NO se ha pulsado buscar aun -> Limpiar
             st.session_state.history_data = None
             
         if buscar:
-            # Definir lista de devices a buscar (None = Todos)
             devs_to_search = sel_devices_pre if sel_devices_pre else None
             
             with st.spinner(f"Consultando..."):
@@ -286,15 +296,11 @@ def show_view():
 
 
     # Aplicar Filtros
-    
-    # Referenciar mapa de alias para uso local
     alias_map = alias_map_pre
 
-    # (El filtro de dispositivos ya se aplicó en la consulta a BD)
     if text_search:
         s = text_search.lower()
         if 'location' not in df.columns: df['location'] = ""
-        # Buscar tambien en alias
         df['temp_alias'] = df['device_id'].map(lambda x: alias_map.get(x, "").lower())
         
         df = df[df['device_id'].astype(str).str.lower().str.contains(s) | 
@@ -305,7 +311,6 @@ def show_view():
     # --- MÉTRICAS DE ESTADO ---
     if not df.empty:
         try:
-            # Calcular desglose
             dev_counts = df['device_id'].value_counts().reset_index()
             dev_counts.columns = ['device_id', 'count']
             dev_counts['alias'] = dev_counts['device_id'].apply(lambda x: alias_map.get(x, x))
@@ -348,7 +353,6 @@ def show_view():
     
     c_down1, c_down2 = st.columns(2)
     
-    # Generar nombre de archivo base
     try:
         f_start = start_d.strftime('%Y%m%d')
         f_end = end_d.strftime('%Y%m%d')
@@ -367,7 +371,7 @@ def show_view():
             mime="text/csv",
             help="Formato ligero, ideal para análisis de datos masivos.",
             type="primary",
-            width="stretch"
+            use_container_width=True
         )
 
     with c_down2:
@@ -380,12 +384,11 @@ def show_view():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 help="Formato Excel con encabezados y formato de celdas.",
                 type="primary",
-                width="stretch"
+                use_container_width=True
             )
         except Exception as e:
              st.warning(f"Error generando Excel: {e}")
 
-    # Separador
     st.markdown("<br>", unsafe_allow_html=True)
 
     # --- 4. OPCIÓN: DESCARGAR TODO ---
@@ -393,7 +396,6 @@ def show_view():
         st.info("Esta opción descargará TODOS los datos históricos disponibles. Puede tardar varios minutos.")
         if st.button("Generar Backup Completo (CSV)"):
             with st.spinner("Generando backup completo..."):
-                # Cargar últimos 10 años
                 now = datetime.now()
                 backup_start = now - timedelta(days=3650)
                 df_all = cargar_datos_rango(backup_start, now)
@@ -414,15 +416,12 @@ def show_view():
     st.markdown("---")
 
     # --- 5. VISTA PREVIA ---
-    # --- 5. VISTA PREVIA ---
     st.markdown(f"**Vista Previa (Últimos {min(500, len(df))} registros)**")
     
-    # Preparar DF para mostrar (Alias en vez de ID)
     df_show = df.head(500).copy()
     if 'device_id' in df_show.columns:
         df_show['Dispositivo'] = df_show['device_id'].apply(lambda x: alias_map.get(x, x))
         
-    # Reordenar columnas para visualización
     base_cols = ['timestamp', 'Dispositivo', 'location']
     final_cols = [c for c in base_cols if c in df_show.columns] + [c for c in df_show.columns if c not in base_cols and c != 'device_id' and c != '_id']
     df_show = df_show[final_cols]
@@ -432,7 +431,6 @@ def show_view():
         "location": "Ubicación",
     }
     
-    # Configurar columnas dinámicas
     num_preview_cols = [c for c in df_show.select_dtypes(include=['number']).columns]
     for col in num_preview_cols:
         label = sensor_config.get(col, {}).get('label', col.title())

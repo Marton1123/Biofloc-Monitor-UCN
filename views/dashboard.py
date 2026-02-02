@@ -135,9 +135,14 @@ def show_view():
     # --- Data Loading ---
     all_devices = []
     
+    # CORREGIR: No usar estados previos al entrar al dashboard (causan estados incorrectos)
+    # Forzar recalculo completo cada vez para evitar mostrar estados stale
+    if 'device_health_states' in st.session_state:
+        del st.session_state['device_health_states']
+    
     try:
         df = db.get_latest_by_device()
-        prev_states = st.session_state.get('device_health_states', {})
+        prev_states = {}  # Siempre vacío para forzar actualización
         
         if df is None or df.empty:
             all_devices = []
@@ -378,23 +383,61 @@ def render_filters(devices, config_manager=None):
         if eff_loc:
              canonical_locations.add(eff_loc)
              device_canon_map[d.device_id] = eff_loc
-
-    all_locations = sorted(list(canonical_locations))
-    all_aliases = sorted([alias_map.get(d.device_id, d.device_id) for d in devices])
     
     with st.container(border=True):
-        c1, c2, c3 = st.columns([1.5, 1, 1.5])
-        with c1: search = st.text_input("Búsqueda Rápida", placeholder="Escribe para buscar...", label_visibility="collapsed")
-        with c2: filter_type = st.selectbox("Criterio de Filtrado", ["-- Selección Rápida --", "Por Estado", "Por Ubicación", "Por Alias/ID"], label_visibility="collapsed")
+        # Nueva distribución: search + filter + multiselect + checkbox (derecha)
+        c1, c2, c3, c4 = st.columns([1.4, 0.8, 1.2, 0.6])
         
-        filtered = devices
+        with c1:
+            search = st.text_input(
+                "Búsqueda Rápida", 
+                placeholder="Buscar...", 
+                label_visibility="collapsed"
+            )
+        
+        with c2:
+            filter_type = st.selectbox(
+                "Criterio de Filtrado", 
+                ["-- Selección Rápida --", "Por Estado", "Por Ubicación", "Por Alias/ID"], 
+                label_visibility="collapsed"
+            )
+        
+        with c4:
+            show_offline = st.checkbox(
+                "Offline",
+                value=False,
+                help="Mostrar dispositivos que no han enviado datos recientemente"
+            )
+        
+        # Aplicar filtro de offline PRIMERO (antes de multiselects)
+        if not show_offline:
+            filtered = [d for d in devices if d.connection != ConnectionStatus.OFFLINE]
+        else:
+            filtered = devices
+        
+        # Calcular opciones para multiselects solo con dispositivos filtrados
+        # Esto evita que aparezcan dispositivos offline en las opciones cuando el checkbox está desmarcado
+        filtered_locations = set()
+        for d in filtered:
+            eff_loc = custom_loc_map.get(d.device_id) or d.location
+            if eff_loc:
+                filtered_locations.add(eff_loc)
+        
+        all_locations = sorted(list(filtered_locations))
+        all_aliases = sorted([alias_map.get(d.device_id, d.device_id) for d in filtered])
+        
+
+
         with c3:
             dynamic_filter = []
             if filter_type == "Por Estado":
                 dynamic_filter = st.multiselect("Estado", ["Normal", "Alerta", "Crítico", "Offline"], label_visibility="collapsed")
                 if dynamic_filter:
+                    # Si el usuario selecciona 'Offline' explícitamente, usar la lista completa (no filtrada)
+                    # para poder mostrar los offline aunque el checkbox esté desmarcado
+                    search_list = devices if "Offline" in dynamic_filter else filtered
                     res = []
-                    for d in filtered:
+                    for d in search_list:
                         s_str = "Offline" if d.connection == ConnectionStatus.OFFLINE else ("Crítico" if d.health == HealthStatus.CRITICAL else ("Alerta" if d.health == HealthStatus.WARNING else "Normal"))
                         if s_str in dynamic_filter: res.append(d)
                     filtered = res

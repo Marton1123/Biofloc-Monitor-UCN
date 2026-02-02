@@ -13,6 +13,7 @@ import time
 
 from modules.database import DatabaseConnection
 from modules.config_manager import ConfigManager
+from modules.device_manager import DeviceManager, ConnectionStatus
 
 # =============================================================================
 # ICONOS SVG INLINE
@@ -427,8 +428,23 @@ def show_view():
             )
             delta = time_options[selected_range]
         
-        # Obtener dispositivos disponibles
+        # Obtener dispositivos disponibles del historial
         all_devices = sorted(df_completo['device_id'].unique().tolist())
+        
+        # Obtener estado actual de conexión de los dispositivos usando DeviceManager
+        try:
+            latest_df = db.get_latest_by_device()
+            if latest_df is not None and not latest_df.empty:
+                # Usar DeviceManager para evaluar el estado de conexión real
+                device_manager = DeviceManager({}, {})
+                all_devices_info = device_manager.get_all_devices_info(latest_df)
+                # Solo incluir dispositivos que NO estén offline
+                online_device_ids = set([d.device_id for d in all_devices_info if d.connection != ConnectionStatus.OFFLINE])
+            else:
+                online_device_ids = set()
+        except Exception as e:
+            print(f"[graphs.py] Error obteniendo estado de dispositivos: {e}")
+            online_device_ids = set(all_devices)  # Fallback: asumir que todos están online si falla
         
         def get_device_alias(dev_id):
             """Obtiene el alias del dispositivo o retorna None si no hay alias."""
@@ -439,10 +455,18 @@ def show_view():
             """Verifica si el dispositivo tiene un alias configurado."""
             return get_device_alias(dev_id) is not None
         
-        # Filtrar: solo dispositivos con alias configurado (excluir desconocidos)
-        devices = [dev_id for dev_id in all_devices if has_configured_alias(dev_id)]
+        def is_device_online(dev_id):
+            """Verifica si el dispositivo está online actualmente."""
+            return dev_id in online_device_ids
         
-        # Si no hay dispositivos con alias, mostrar todos (fallback)
+        # Filtrar: solo dispositivos con alias configurado Y online (excluir offline y desconocidos)
+        devices = [dev_id for dev_id in all_devices if has_configured_alias(dev_id) and is_device_online(dev_id)]
+        
+        # Si no hay dispositivos con alias online, mostrar todos los que tienen alias (fallback)
+        if not devices:
+            devices = [dev_id for dev_id in all_devices if has_configured_alias(dev_id)]
+        
+        # Si aún no hay dispositivos, mostrar todos (fallback final)
         if not devices:
             devices = all_devices
         
@@ -457,28 +481,26 @@ def show_view():
         # Usamos 'default' para la primera carga, sin key (evita conflictos)
         # =====================================================================
         
-        # Calcular default inicial
+        # Calcular default inicial para dispositivos
+        default_devices = None
         if url_device_id and url_device_id in devices:
-            initial_default = [url_device_id]
-        else:
-            # Usar selección previa si existe y es válida
-            if 'graphs_prev_devices' in st.session_state:
-                prev = st.session_state.graphs_prev_devices
-                valid_prev = [d for d in prev if d in devices]
-                initial_default = valid_prev if valid_prev else devices[:min(2, len(devices))]
-            else:
-                initial_default = devices[:min(2, len(devices))]
+            # Si viene desde el dashboard, precargar ese dispositivo
+            default_devices = [url_device_id]
+        elif 'graphs_prev_devices' in st.session_state:
+            # Si ya se buscó antes, usar la selección previa
+            prev = st.session_state.graphs_prev_devices
+            valid_prev = [d for d in prev if d in devices]
+            default_devices = valid_prev if valid_prev else None
         
         with c_dev:
             selected_devices = st.multiselect(
                 "Dispositivos", 
                 devices, 
-                default=initial_default,
+                default=default_devices,
                 format_func=lambda x: device_display_map.get(x, x),
-                key="graphs_device_multiselect"
+                key="graphs_device_multiselect",
+                placeholder="Seleccionar dispositivos..."
             )
-            # Guardar selección actual para próximo rerun
-            st.session_state.graphs_prev_devices = selected_devices
         
         # Filtrar para obtener parámetros disponibles
         excluded = ['timestamp', 'device_id', 'location', 'id', '_id', 'lat', 'lon', 'device_name']
@@ -496,36 +518,94 @@ def show_view():
             available_params = params
         
         # Calcular default inicial para parámetros
+        default_params = None
         if url_device_id and url_device_id in devices:
-            initial_params = available_params
-        else:
-            # Usar selección previa si existe y es válida
-            if 'graphs_prev_params' in st.session_state:
-                prev = st.session_state.graphs_prev_params
-                valid_prev = [p for p in prev if p in available_params]
-                initial_params = valid_prev if valid_prev else available_params[:min(2, len(available_params))]
-            else:
-                initial_params = available_params[:min(2, len(available_params))]
+            # Si viene desde dashboard, seleccionar primeros parámetros disponibles
+            default_params = available_params[:min(2, len(available_params))]
+        elif 'graphs_prev_params' in st.session_state:
+            # Si ya se buscó antes, usar la selección previa
+            prev = st.session_state.graphs_prev_params
+            valid_prev = [p for p in prev if p in available_params]
+            default_params = valid_prev if valid_prev else None
         
         with c_param:
             selected_params = st.multiselect(
                 "Parámetros", 
                 available_params, 
-                default=initial_params,
+                default=default_params,
                 format_func=lambda x: get_sensor_display_info(x, sensor_config)[0],
-                key="graphs_param_multiselect"
+                key="graphs_param_multiselect",
+                placeholder="Seleccionar parámetros..."
             )
-            # Guardar selección actual para próximo rerun
-            st.session_state.graphs_prev_params = selected_params
-
-    if not selected_devices or not selected_params:
-        st.markdown(f"<div style='padding: 12px; background: #e0f2fe; border-radius: 8px; color: #0369a1;'>{ICON_POINTER} Seleccione dispositivos y parámetros para visualizar.</div>", unsafe_allow_html=True)
-        return
-
-    # --- FILTRAR DATOS EN MEMORIA (RÁPIDO) ---
-    # DEBUG desactivado para producción
-    filtered_df = filtrar_dataframe(df_completo, selected_devices, delta, debug=False)
+        
+        # NUEVO: Botón para generar gráficas (modo manual como history)
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        c_btn1, c_btn2 = st.columns([1, 4])
+        with c_btn1:
+            ver_graficas = st.button("VER GRÁFICAS", type="primary", use_container_width=True)
+        with c_btn2:
+            pass  # Espacio vacío
     
+    # =====================================================================
+    # INICIALIZAR ESTADO DE SESIÓN
+    # =====================================================================
+    if 'graphs_data_loaded' not in st.session_state:
+        st.session_state.graphs_data_loaded = None
+    if 'graphs_last_params' not in st.session_state:
+        st.session_state.graphs_last_params = None
+    if 'graphs_has_searched' not in st.session_state:
+        st.session_state.graphs_has_searched = False  # Controla si el usuario ya hizo una búsqueda
+    
+    # Parámetros actuales
+    current_params = (tuple(sorted(selected_devices)) if selected_devices else (), 
+                      tuple(sorted(selected_params)) if selected_params else (), 
+                      delta)
+    
+    # Detectar si cambió algo
+    params_changed = st.session_state.graphs_last_params != current_params
+    
+    # Decidir si regenerar gráficas automáticamente
+    should_regenerate = False
+    
+    # Al hacer clic en "VER GRÁFICAS" (primera búsqueda o búsqueda manual)
+    if ver_graficas:
+        if not selected_devices or not selected_params:
+            st.warning("Por favor selecciona al menos un dispositivo y un parámetro.")
+        else:
+            should_regenerate = True
+            st.session_state.graphs_has_searched = True  # Marcar que ya se hizo una búsqueda
+    
+    # Auto-regenerar si ya se buscó antes Y los parámetros cambiaron
+    elif st.session_state.graphs_has_searched and params_changed and selected_devices and selected_params:
+        should_regenerate = True
+    
+    # Regenerar gráficas si es necesario
+    if should_regenerate:
+        # Guardar selección actual
+        st.session_state.graphs_prev_devices = selected_devices
+        st.session_state.graphs_prev_params = selected_params
+        st.session_state.graphs_last_params = current_params
+        
+        # Filtrar datos
+        with st.spinner("Generando gráficas..."):
+            filtered_df = filtrar_dataframe(df_completo, selected_devices, delta, debug=False)
+            st.session_state.graphs_data_loaded = filtered_df
+    
+    # Obtener datos de sesión
+    filtered_df = st.session_state.graphs_data_loaded
+    
+    # Si no hay datos, mostrar mensaje instructivo
+    if filtered_df is None:
+        st.markdown(f"""
+        <div style="margin-top:20px; padding:15px; border-radius:8px; background-color:#f8fafc; border:1px dashed #cbd5e1; color:#64748b; display:flex; gap:10px; align-items:center;">
+            {ICON_INFO} 
+            <span>Configura los filtros y presiona <b>'VER GRÁFICAS'</b> para visualizar los datos.</span>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # Si filtered_df está vacío
     if filtered_df.empty:
         st.warning("No hay datos para la selección actual.")
         return

@@ -147,10 +147,15 @@ class DatabaseConnection:
                 except (ValueError, TypeError):
                     pass
             
+        # 5. Normalizar Location (puede venir como 'location' o 'ubicacion')
+        loc = doc.get("location")
+        if not loc:
+            loc = doc.get("ubicacion", "Sin Asignar")
+        
         return {
             "device_id": dev_id,
             "timestamp": final_ts,
-            "location": doc.get("location", "Sin Asignar"),
+            "location": loc,
             "sensors": normalized_sensors,
             "alerts": doc.get("alerts", []),
             "_source_id": oid 
@@ -163,19 +168,19 @@ class DatabaseConnection:
         # ID es clave siempre
         d_id = raw_doc.get("_id")
         
-        # 1. Alias / Nombre
+        # 1. Alias / Nombre (soporta ambos esquemas)
         # Schema Propio: 'alias'
         # Schema Partner: 'nombre'
-        alias = raw_doc.get("alias")
+        alias = raw_doc.get("alias") or raw_doc.get("nombre")
         if not alias:
-            alias = raw_doc.get("nombre", d_id) # Fallback al ID si no hay nombre
+            alias = d_id  # Fallback al ID si no hay nombre ni alias
             
-        # 2. Location / Ubicación
+        # 2. Location / Ubicación (soporta ambos esquemas)
         # Schema Propio: 'location'
         # Schema Partner: 'ubicacion'
-        loc = raw_doc.get("location")
+        loc = raw_doc.get("location") or raw_doc.get("ubicacion")
         if not loc:
-            loc = raw_doc.get("ubicacion", "Desconocido")
+            loc = "Desconocido"
             
         # 3. Umbrales
         # Ambos parecen usar 'umbrales' o 'config' -> mapping directo

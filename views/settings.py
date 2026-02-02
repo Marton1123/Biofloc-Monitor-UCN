@@ -96,9 +96,24 @@ def show_view():
             if not all_ids:
                 st.info("No se han detectado dispositivos.")
             else:
+                # Crear mapeo de alias para mostrar (Alias + ID)
+                device_display = {}
+                for dev_id in all_ids:
+                    meta = metadata.get(dev_id, {})
+                    alias = meta.get("alias", dev_id)
+                    # Formato: "Alias (ID)" o solo "ID" si no hay alias
+                    if alias and alias != dev_id:
+                        device_display[dev_id] = f"{alias} ({dev_id})"
+                    else:
+                        device_display[dev_id] = dev_id
+                
                 c_sel, c_edit = st.columns([1, 2])
                 with c_sel:
-                    selected_id = st.selectbox("Selecciona ID Técnico", all_ids)
+                    selected_id = st.selectbox(
+                        "Selecciona Dispositivo", 
+                        all_ids,
+                        format_func=lambda x: device_display.get(x, x)
+                    )
                     curr_meta = metadata.get(selected_id, {})
                 
                 with c_edit:
@@ -123,8 +138,24 @@ def show_view():
             if not all_ids:
                 st.warning("Sin dispositivos disponibles.")
             else:
+                # Crear mapeo de alias para mostrar
+                device_display = {}
+                for dev_id in all_ids:
+                    meta = metadata.get(dev_id, {})
+                    alias = meta.get("alias", dev_id)
+                    if alias and alias != dev_id:
+                        device_display[dev_id] = f"{alias} ({dev_id})"
+                    else:
+                        device_display[dev_id] = dev_id
+                
                 # 1. Seleccionar Dispositivo
-                target_dev = st.selectbox("1. Dispositivo", all_ids, key="thr_dev_sel")
+                target_dev = st.selectbox(
+                    "Dispositivo", 
+                    all_ids, 
+                    key="thr_dev_sel",
+                    format_func=lambda x: device_display.get(x, x),
+                    help="Selecciona el dispositivo para configurar sus umbrales de alertas"
+                )
                 
                 # 2. Descubrir Parámetros
                 valid_params = discover_available_params(recent_df, target_dev)
@@ -157,8 +188,18 @@ def show_view():
                         
                         with c1:
                             st.markdown(f"**Zona Baja** {ICON_WARN}", unsafe_allow_html=True)
-                            val_crit_min = st.number_input("Mínimo Crítico (Muerte)", value=d_cmin, step=0.1)
-                            val_opt_min = st.number_input("Inicio Normalidad", value=d_omin, step=0.1)
+                            val_crit_min = st.number_input(
+                                "Mínimo Crítico (Muerte)", 
+                                value=d_cmin, 
+                                step=0.1,
+                                help="Valor por debajo del cual el sistema genera ALERTA CRÍTICA (riesgo de muerte del cultivo)"
+                            )
+                            val_opt_min = st.number_input(
+                                "Inicio Normalidad", 
+                                value=d_omin, 
+                                step=0.1,
+                                help="Límite inferior del rango óptimo. Entre este valor y 'Fin Normalidad' el sistema está OK"
+                            )
                             
                         with c2:
                             st.markdown(f"**Zona Ideal** {ICON_CHECK}", unsafe_allow_html=True)
@@ -172,8 +213,18 @@ def show_view():
                         
                         with c3:
                             st.markdown(f"**Zona Alta** {ICON_WARN}", unsafe_allow_html=True)
-                            val_opt_max = st.number_input("Fin Normalidad", value=d_omax, step=0.1)
-                            val_crit_max = st.number_input("Máximo Crítico (Muerte)", value=d_cmax, step=0.1)
+                            val_opt_max = st.number_input(
+                                "Fin Normalidad", 
+                                value=d_omax, 
+                                step=0.1,
+                                help="Límite superior del rango óptimo. Valores superiores generan advertencias"
+                            )
+                            val_crit_max = st.number_input(
+                                "Máximo Crítico (Muerte)", 
+                                value=d_cmax, 
+                                step=0.1,
+                                help="Valor por encima del cual el sistema genera ALERTA CRÍTICA (riesgo de muerte del cultivo)"
+                            )
 
                         # Logic check
                         err = None

@@ -9,7 +9,7 @@
 
 **Arquitectura base modular y escalable para monitoreo IoT en acuicultura, integrando ROS 2, MongoDB y Dashboards en tiempo real**
 
-[Demo en Vivo](#) · [Documentación](docs/MANUAL_USUARIO.md) · [Reportar Bug](https://github.com/Marton1123/Core-IoT-Monitor/issues)
+[Demo en Vivo](#) · [Manual de Usuario](docs/MANUAL_USUARIO.md) · [Guía Multi-DB](docs/MULTI_SCHEMA_GUIDE.md) · [Reportar Bug](https://github.com/Marton1123/Core-IoT-Monitor/issues)
 
 </div>
 
@@ -36,12 +36,13 @@ Este repositorio está diseñado para ser **bifurcado (Forked)** y utilizado com
 
 | Función | Descripción |
 |---------|-------------|
-| **📊 Dashboard Modular** | Interfaz unificada capaz de renderizar dinámicamente cualquier sensor detectado en la DB |
-| **🚦 Sistema de Alertas** | Semaforización automática (Normal/Alerta/Crítico) y lógica de alertas extensible |
-| **📈 Gráficas Interactivas** | Análisis de tendencias con Plotly, independiente del tipo de sensor monitoreado |
+| **📊 Dashboard Multi-Fuente** | Integración transparente de múltiples bases de datos (propia + partners) con normalización automática |
+| **🚦 Sistema de Alertas Inteligente** | Semaforización automática (Normal/Alerta/Crítico) con umbrales configurables por dispositivo |
+| **📈 Gráficas Adaptativas** | Análisis de tendencias con filtrado de outliers y detección automática de sensores |
 | **📥 Exportación Universal** | Descarga de históricos en formato Excel (.xlsx) y CSV normalizado |
-| **⚙️ Configuración Dinámica** | Ajuste de umbrales y metadatos de dispositivos en tiempo de ejecución (Hot-Reload) |
-| **Bajo Acoplamiento** | Separación estricta entre Lógica de Datos (Modules) y Presentación (Views) |
+| **⚙️ Gestión Multi-Esquema** | Soporte para diferentes estructuras de datos (alias/nombre, location/ubicacion) |
+| **🔄 Registry-First Strategy** | Visualización de dispositivos inactivos con su último estado conocido |
+| **🔌 Bajo Acoplamiento** | Separación estricta entre Lógica de Datos (Modules) y Presentación (Views) |
 
 ---
 
@@ -50,14 +51,20 @@ Este repositorio está diseñado para ser **bifurcado (Forked)** y utilizado com
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  Nodos ROS 2    │────▶│  MongoDB Atlas   │◀────│  Core IoT App   │
-│  (Micro-ROS)    │     │  (Data Lake)     │     │  (Streamlit)    │
+│  (Micro-ROS)    │     │  (Multi-Source)  │     │  (Streamlit)    │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
+                              ▲  ▲
+                              │  │
+                    ┌─────────┘  └─────────┐
+                    │                      │
+              BD Principal          BD Secundaria
+           (Escritura/Lectura)    (Partner - Lectura)
 ```
 
 **Stack Tecnológico:**
-- **Frontend**: Streamlit 1.36+ (Components-based Architecture)
+- **Frontend**: Streamlit 1.36+ (Fragment-based Architecture)
 - **Backend**: Python 3.10+, PyMongo
-- **Base de Datos**: MongoDB Atlas (Schema-less)
+- **Base de Datos**: MongoDB Atlas (Multi-Source Support)
 - **Visualización**: Plotly Express
 - **Procesamiento**: Pandas, NumPy
 
@@ -70,34 +77,44 @@ Core-IoT-Monitor/
 ├── Home.py                    # Punto de entrada y navegación
 ├── requirements.txt           # Dependencias del proyecto
 ├── .env                       # Variables de entorno (NO en git)
+├── .env.example              # Plantilla de variables de entorno
+├── .gitignore                # Archivos excluidos de git
+├── README.md                 # Este archivo
+├── COMMIT_SUMMARY.md         # Resumen detallado de cambios
 ├── .streamlit/
-│   └── secrets.toml          # Secretos para Streamlit Cloud
+│   ├── config.toml           # Configuración de Streamlit
+│   └── secrets.toml.example  # Plantilla de secretos para Streamlit Cloud
 │
 ├── views/                     # Vistas de la aplicación
-│   ├── dashboard.py          # Dashboard principal con tarjetas
-│   ├── graphs.py             # Gráficas interactivas
+│   ├── __init__.py           # Inicializador del paquete
+│   ├── dashboard.py          # Dashboard principal con tarjetas y filtros
+│   ├── graphs.py             # Gráficas interactivas con auto-actualización
 │   ├── history.py            # Historial y exportación de datos
 │   └── settings.py           # Configuración de sensores y dispositivos
 │
 ├── modules/                   # Lógica de negocio
-│   ├── database.py           # Conexión y queries a MongoDB
+│   ├── database.py           # Conexión multi-fuente y normalización
 │   ├── device_manager.py     # Evaluación de estado de dispositivos
 │   ├── config_manager.py     # Gestión de configuración
 │   ├── sensor_registry.py    # Registro de sensores detectados
 │   └── styles.py             # Estilos CSS globales
 │
 ├── scripts/                   # Scripts de utilidad
-│   └── mock_data_generator.py # Generador de datos de prueba
+│   ├── mock_data_generator.py # Generador de datos de prueba
+│   ├── test_normalization.py  # Verificación de normalización multi-esquema
+│   ├── debug_db.py            # Herramienta de debugging de MongoDB
+│   └── export_to_excel.py     # Script de exportación a Excel
 │
 ├── config/                    # Configuración estática
 │   └── sensor_defaults.json  # Valores por defecto de sensores
 │
 ├── assets/                    # Recursos estáticos
-│   ├── logo_acui.png
-│   └── logo_eic.png
+│   ├── logo_acui.png         # Logo acuicultura
+│   └── logo_eic.png          # Logo EIC-UCN
 │
 └── docs/                      # Documentación
-    └── MANUAL_USUARIO.md
+    ├── MANUAL_USUARIO.md     # Manual de usuario completo
+    └── MULTI_SCHEMA_GUIDE.md # Guía de compatibilidad multi-database
 ```
 
 ---
@@ -119,8 +136,8 @@ cd Core-IoT-Monitor
 ### 2. Crear Entorno Virtual (Anaconda)
 
 ```bash
-conda create --name biofloc_env python=3.10 -y
-conda activate biofloc_env
+conda create --name iot_monitor_env python=3.10 -y
+conda activate iot_monitor_env
 ```
 
 ### 3. Instalar Dependencias
@@ -134,19 +151,31 @@ pip install -r requirements.txt
 Crea un archivo `.env` en la raíz del proyecto. El sistema soporta múltiples fuentes de datos de forma modular:
 
 ```ini
-# --- BD PRINCIPAL (Escritura/Lectura) ---
-MONGO_URI=mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/
+# =============================================================================
+# BASE DE DATOS PRINCIPAL (Lectura/Escritura)
+# =============================================================================
+MONGO_URI=mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/?appName=AppName
 MONGO_DB=BioflocDB
-MONGO_COLLECTION=telemetria           # Colección de datos de sensores
-MONGO_DEVICES_COLLECTION=devices      # Colección de metadatos de dispositivos
+MONGO_COLLECTION=telemetria              # Datos de sensores (telemetría)
+MONGO_DEVICES_COLLECTION=devices         # Metadatos de dispositivos
 
-# --- BD SECUNDARIA (Opcional - Solo Lectura) ---
-# Útil para integrar datos de partners o sensores externos
-MONGO_URI_2=...
-MONGO_DB_2=...
-MONGO_COLLECTION_2=...
-MONGO_DEVICES_COLLECTION_2=...
+# =============================================================================
+# BASE DE DATOS SECUNDARIA (Opcional - Solo Lectura o Escritura Controlada)
+# =============================================================================
+# Útil para integrar datos de partners, laboratorios externos o dispositivos remotos
+# Soporta esquemas diferentes (alias/nombre, location/ubicacion) con normalización automática
+
+MONGO_URI_2=mongodb+srv://<usuario2>:<password2>@<cluster2>.mongodb.net/
+MONGO_DB_2=PartnerDB
+MONGO_COLLECTION_2=sensor_data           # Puede tener estructura diferente
+MONGO_DEVICES_COLLECTION_2=devices_data  # Campo 'nombre' en vez de 'alias', etc.
 ```
+
+**Notas importantes:**
+- Las bases secundarias se normalizan automáticamente para compatibilidad
+- Soporta campos `alias` o `nombre` indistintamente
+- Soporta campos `location` o `ubicacion` indistintamente
+- Los dispositivos de todas las fuentes se unifican en un solo dashboard
 
 ### 5. Ejecutar la Aplicación
 
@@ -163,7 +192,7 @@ Accede a `http://localhost:8501` en tu navegador.
 El proyecto incluye un generador de datos mock para testing:
 
 ```bash
-python scripts/mock_data_generator.py
+python -m scripts.mock_data_generator
 ```
 
 **Opciones del generador:**
@@ -171,6 +200,14 @@ python scripts/mock_data_generator.py
 - Incluye variaciones realistas en los parámetros
 - Simula escenarios de alerta y condiciones críticas
 - Los datos se insertan directamente en MongoDB
+
+**Verificar normalización multi-esquema:**
+
+```bash
+python -m scripts.test_normalization
+```
+
+Este script muestra cómo el sistema normaliza diferentes esquemas de bases de datos.
 
 ---
 
@@ -187,15 +224,19 @@ Asegúrate de que tu repositorio tenga:
 En la configuración de tu app en Streamlit Cloud, añade estos secretos (formato TOML):
 
 ```toml
-# BD Principal
-MONGO_URI = "mongodb+srv://..."
+# =============================================================================
+# BASE DE DATOS PRINCIPAL
+# =============================================================================
+MONGO_URI = "mongodb+srv://<usuario>:<password>@<cluster>.mongodb.net/?appName=AppName"
 MONGO_DB = "BioflocDB"
 MONGO_COLLECTION = "telemetria"
 MONGO_DEVICES_COLLECTION = "devices"
 
-# BD Secundaria (Opcional)
-MONGO_URI_2 = "mongodb+srv://..."
-MONGO_DB_2 = "ExternalDB"
+# =============================================================================
+# BASE DE DATOS SECUNDARIA (Opcional)
+# =============================================================================
+MONGO_URI_2 = "mongodb+srv://<usuario2>:<password2>@<cluster2>.mongodb.net/"
+MONGO_DB_2 = "PartnerDB"
 MONGO_COLLECTION_2 = "sensor_data"
 MONGO_DEVICES_COLLECTION_2 = "devices_data"
 ```
@@ -213,38 +254,120 @@ MONGO_DEVICES_COLLECTION_2 = "devices_data"
 
 ### 🏠 Dashboard (Inicio)
 
-Vista principal con tarjetas de dispositivos. Cada tarjeta muestra:
+Vista principal con tarjetas de dispositivos de **todas las fuentes conectadas**:
 - Estado del dispositivo (Normal/Alerta/Crítico/Offline)
+- Alias personalizables (soporta `alias` o `nombre` según la BD)
 - Últimas lecturas de sensores (hasta 4)
 - Botón de **Actualización Parcial** (solo recarga esa tarjeta)
-- Acceso directo a gráficas del dispositivo
+- Visualización de dispositivos inactivos con su último estado conocido
+
+**Estrategia Registry-First:**
+El sistema prioriza el registro de dispositivos, mostrando incluso aquellos que no han enviado datos recientemente, consultando su último estado histórico.
 
 ### 📈 Gráficas
 
-Visualización interactiva de datos históricos:
-- Selector de dispositivo y rango de fechas
+Visualización interactiva de datos históricos con filtrado inteligente:
+- Selector de dispositivo multi-fuente y rango de fechas
 - Gráficas multi-sensor con Plotly
+- **Filtrado automático de outliers** (valores imposibles)
 - Zoom, pan y exportación de imágenes
+- Detección dinámica de sensores disponibles
 
 ### 📥 Datos (Historial)
 
-Tabla con historial completo de lecturas:
-- Filtros por dispositivo, fecha y sensor
-- Paginación de resultados
+Tabla con historial completo de lecturas de **todas las fuentes**:
+- Filtros por dispositivo, fecha y texto
+- Búsqueda por alias, ID o ubicación
+- Logs de rendimiento (docs cargados vs. válidos)
 - **Exportación a Excel y CSV**
+- Estadísticas por dispositivo
 
 ### ⚙️ Configuración
 
-Gestión del sistema:
-- Umbrales de alerta por sensor (mínimo/máximo)
-- Metadatos de dispositivos (alias, ubicación)
-- Configuración persistente en MongoDB
+Gestión del sistema con UI mejorada:
+
+**Pestaña 1: Identidad Dispositivos**
+- Gestión de alias y ubicaciones
+- Soporte para escritura en bases secundarias (si está habilitado)
+- Visualización clara: `Alias (ID Técnico)`
+
+**Pestaña 2: Umbrales & Alertas**
+- Configuración de rangos por dispositivo y parámetro
+- Tooltips explicativos en cada campo:
+  - **Mínimo Crítico**: Valor de alerta crítica (riesgo de muerte)
+  - **Inicio Normalidad**: Límite inferior del rango óptimo
+  - **Fin Normalidad**: Límite superior del rango óptimo
+  - **Máximo Crítico**: Valor de alerta crítica superior
+- Visualización de zona segura en tiempo real
+- Validación lógica de rangos
 
 ---
 
-## 🔧 Características Técnicas
+## 🔧 Características Técnicas Avanzadas
 
-### Actualización Parcial con @fragment
+### Multi-Database Adapter Pattern
+
+El sistema implementa un patrón de adaptador para normalizar diferentes esquemas de bases de datos:
+
+```python
+def _normalize_device_doc(self, raw_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normaliza metadatos de DISPOSITIVOS de diferentes esquemas.
+    Soporta: 'alias' o 'nombre', 'location' o 'ubicacion'
+    """
+    alias = raw_doc.get("alias") or raw_doc.get("nombre")
+    loc = raw_doc.get("location") or raw_doc.get("ubicacion")
+    # ... normalización automática
+```
+
+**📖 Documentación**: Para más detalles sobre compatibilidad de schemas, consulta [docs/MULTI_SCHEMA_GUIDE.md](docs/MULTI_SCHEMA_GUIDE.md)
+
+### Registry-First Strategy
+
+Prioriza el registro de dispositivos sobre los datos en vivo:
+
+```python
+def get_latest_by_device(self):
+    # 1. Obtener todos los dispositivos registrados
+    registered = self.get_all_registered_devices()
+    
+    # 2. Buscar datos recientes
+    live_data = self.fetch_recent_telemetry()
+    
+    # 3. Para dispositivos sin datos recientes, buscar último histórico
+    for device in registered:
+        if device not in live_data:
+            last_known = self.fetch_last_historical(device)
+            # Mostrar con timestamp antiguo (offline pero visible)
+```
+
+### Outlier Filtering
+
+Las gráficas filtran automáticamente valores imposibles:
+
+```python
+# Temperatura: 0 a 60°C (Biofloc no se congela ni hierve)
+if 'temperature' in df.columns:
+    df = df[(df['temperature'].isna()) | 
+            ((df['temperature'] >= 0) & (df['temperature'] <= 60))]
+
+# pH: 0 a 14 (Rango físico-químico)
+if 'ph' in df.columns:
+    df = df[(df['ph'].isna()) | ((df['ph'] >= 0) & (df['ph'] <= 14))]
+```
+
+### Parallel Data Loading
+
+Carga de datos de múltiples fuentes en paralelo:
+
+```python
+with ThreadPoolExecutor(max_workers=len(db.sources)) as executor:
+    futures = [executor.submit(load_source, s) for s in db.sources]
+    for f in as_completed(futures):
+        all_data.extend(f.result())
+```
+
+### Fragment-Based Partial Updates
 
 Las tarjetas del dashboard usan el decorador `@fragment` de Streamlit para actualizaciones parciales:
 
@@ -253,35 +376,31 @@ Las tarjetas del dashboard usan el decorador `@fragment` de Streamlit para actua
 def render_live_device_card(device, thresholds, config):
     # Solo esta tarjeta se re-renderiza al hacer clic
     if st.button("Actualizar"):
-        # Consulta solo este dispositivo
         fresh_data = db.get_latest_for_single_device(device.device_id)
-```
-
-### Conexión Resiliente a MongoDB
-
-El sistema implementa reconexión automática con reintentos:
-
-```python
-def get_latest_by_device(self, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            # Query a MongoDB
-        except Exception as e:
-            time.sleep(0.5 * (attempt + 1))
-```
-
-### Sistema de Caché en Session State
-
-Los datos se cachean en `st.session_state` para evitar consultas innecesarias:
-
-```python
-if f"live_data_{device_id}" not in st.session_state:
-    st.session_state[f"live_data_{device_id}"] = fetch_from_db()
 ```
 
 ---
 
 ## 📝 Changelog
+
+### v3.1.0 (Febrero 2026)
+- ✅ **Dashboard: Filtro Inteligente Offline**: Checkbox compacto para mostrar/ocultar dispositivos offline
+- ✅ **Dashboard: Filtros Dinámicos**: Opciones filtradas según visibilidad (alias/ubicaciones solo de dispositivos activos)
+- ✅ **Dashboard: Corrección Estados Stale**: Estados de salud siempre reflejan datos actuales
+- ✅ **Gráficas: Auto-actualización**: Regeneración automática después de primera búsqueda
+- ✅ **Gráficas: Filtrado Offline**: Dispositivos offline excluidos del multiselect
+- ✅ **Gráficas: Sin Precarga**: Primera visita requiere selección manual
+- ✅ **UX: Filtro "Por Estado: Offline"**: Respeta selección explícita del usuario
+- ✅ **Histórico: Acceso Completo**: Permite selección de offline para descarga de datos históricos
+
+### v3.0.0 (Febrero 2026)
+- ✅ **Soporte Multi-Base de Datos**: Integración transparente de múltiples fuentes
+- ✅ **Normalización Multi-Esquema**: Soporta `alias`/`nombre`, `location`/`ubicacion`
+- ✅ **Registry-First Strategy**: Visualización de dispositivos inactivos
+- ✅ **Filtrado de Outliers**: Eliminación automática de valores imposibles en gráficas
+- ✅ **UI Mejorada en Settings**: Tooltips descriptivos y visualización con alias
+- ✅ **Logs de Diagnóstico**: Trazabilidad completa de carga de datos por fuente
+- ✅ **Script de Verificación**: `test_normalization.py` para debugging
 
 ### v2.0.0 (Enero 2025)
 - ✅ Nuevo sistema de actualización parcial por dispositivo
@@ -292,7 +411,7 @@ if f"live_data_{device_id}" not in st.session_state:
 - ✅ Navegación mejorada con iconos Material
 - ✅ Soporte para Streamlit Cloud
 
-### v1.0.0 (Diciembre 2024)
+### v1.0.0 (Enero 2026)
 - Dashboard inicial con tarjetas de dispositivos
 - Gráficas interactivas con Plotly
 - Configuración de umbrales
@@ -307,6 +426,12 @@ if f"live_data_{device_id}" not in st.session_state:
 3. Commit tus cambios (`git commit -m 'Añadir nueva funcionalidad'`)
 4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
 5. Abre un Pull Request
+
+---
+
+## 📄 Licencia
+
+Este proyecto es de código abierto y está disponible bajo la licencia MIT.
 
 ---
 
